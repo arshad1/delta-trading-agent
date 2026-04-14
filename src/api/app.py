@@ -116,6 +116,10 @@ async def serve_spa(full_path: str):
             if FRONTEND_DIST.resolve() in requested_file.resolve().parents or FRONTEND_DIST.resolve() == requested_file.resolve():
                 if requested_file.is_file():
                     return FileResponse(str(requested_file))
+                # Explicitly return 404 for missing static assets to prevent sending index.html
+                if full_path.startswith("assets/"):
+                    from fastapi import HTTPException
+                    raise HTTPException(status_code=404, detail="Asset not found")
         except Exception:
             pass
 
