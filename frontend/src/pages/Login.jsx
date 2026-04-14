@@ -81,10 +81,6 @@ export default function Login() {
             {loading ? <><span className="spinner" /> Signing in…</> : '→ Sign In'}
           </button>
         </form>
-
-        <p style={{ textAlign: 'center', marginTop: 24, fontSize: 12, color: 'var(--text-muted)' }}>
-          Default credentials: <strong style={{ color: 'var(--text-secondary)' }}>admin / admin123</strong>
-        </p>
       </div>
     </div>
   )
