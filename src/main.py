@@ -360,7 +360,7 @@ def main():
                     return True
 
             try:
-                outputs = agent.decide_trade(args.assets, context)
+                outputs = await agent.decide_trade(args.assets, context)
                 if not isinstance(outputs, dict):
                     add_event(f"Invalid output format (expected dict): {outputs}")
                     outputs = {}
@@ -379,7 +379,7 @@ def main():
                 ])
                 context_retry = json.dumps(context_retry_payload, default=json_default)
                 try:
-                    outputs = agent.decide_trade(args.assets, context_retry)
+                    outputs = await agent.decide_trade(args.assets, context_retry)
                     if not isinstance(outputs, dict):
                         add_event(f"Retry invalid format: {outputs}")
                         outputs = {}

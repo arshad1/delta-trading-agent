@@ -64,9 +64,9 @@ class TradingAgent:
     # Public API & Multi-Agent Routing
     # ------------------------------------------------------------------
 
-    def decide_trade(self, assets, context):
+    async def decide_trade(self, assets, context):
         """Quant decides for multiple assets, then Risk Reviewer filters buys/sells."""
-        quant_out = self._decide(context, assets=assets)
+        quant_out = await self._decide(context, assets=assets)
         if not isinstance(quant_out, dict):
             return quant_out
             
@@ -75,7 +75,7 @@ class TradingAgent:
             if dec.get("action") in ("buy", "sell"):
                 asset = dec.get("asset", "unknown")
                 logger.info("Submitting %s %s proposal to Risk Reviewer...", asset, dec["action"])
-                review = self._review_decision(asset, context, dec)
+                review = await self._review_decision(asset, context, dec)
                 if not review.get("approved"):
                     dec["action"] = "hold"
                     original_reason = dec.get("rationale", "")
@@ -88,7 +88,7 @@ class TradingAgent:
         quant_out["trade_decisions"] = reviewed_decisions
         return quant_out
 
-    def _review_decision(self, asset: str, context: str, decision: dict) -> dict:
+    async def _review_decision(self, asset: str, context: str, decision: dict) -> dict:
         """Second LLM pass to strictly filter false-positives."""
         system_prompt = (
             "You are a highly conservative Chief Risk Officer evaluating an AI Quant's proposed trade.\n"
@@ -110,13 +110,18 @@ class TradingAgent:
                 )
                 
                 raw_text = resp.text.strip()
-                if raw_text.startswith("```"):
-                    first_nl = raw_text.find("\n")
-                    raw_text = raw_text[first_nl + 1:] if first_nl != -1 else raw_text
-                if raw_text.endswith("```"):
-                    raw_text = raw_text[:-3].rstrip()
-                    
-                parsed = json.loads(raw_text)
+                
+                # Robust JSON extraction
+                import re
+                match = re.search(r'```(?:json)?\s*(.*?)\s*```', raw_text, re.DOTALL | re.IGNORECASE)
+                if match:
+                    cleaned = match.group(1).strip()
+                else:
+                    start = raw_text.find('{')
+                    end = raw_text.rfind('}')
+                    cleaned = raw_text[start:end+1] if start != -1 and end != -1 and end > start else raw_text
+
+                parsed = json.loads(cleaned)
                 if isinstance(parsed, dict) and "approved" in parsed:
                     return parsed
             except Exception as e:
@@ -254,8 +259,9 @@ class TradingAgent:
     # Tool execution
     # ------------------------------------------------------------------
 
-    def _handle_tool_call(self, tool_name: str, tool_input: dict) -> str:
+    async def _execute_tool(self, tool_name: str, tool_input: dict) -> str:
         """Execute a tool call and return the result as a JSON string."""
+        logger.info("LLM is calling tool: '%s' with arguments: %s", tool_name, tool_input)
         if tool_name != "fetch_indicator":
             return json.dumps({"error": f"Unknown tool: {tool_name}"})
         try:
@@ -263,16 +269,7 @@ class TradingAgent:
             interval = tool_input["interval"]
             indicator = tool_input["indicator"]
 
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    candles = pool.submit(
-                        asyncio.run,
-                        self.hyperliquid.get_candles(asset, interval, 100)
-                    ).result(timeout=30)
-            else:
-                candles = asyncio.run(self.hyperliquid.get_candles(asset, interval, 100))
+            candles = await self.hyperliquid.get_candles(asset, interval, 100)
 
             all_inds = compute_all(candles)
 
@@ -346,7 +343,18 @@ class TradingAgent:
                 messages=[{"role": "user", "content": raw_content}],
                 max_tokens=2048,
             )
-            parsed = json.loads(resp.text)
+            raw_text = resp.text.strip()
+            
+            import re
+            match = re.search(r'```(?:json)?\s*(.*?)\s*```', raw_text, re.DOTALL | re.IGNORECASE)
+            if match:
+                cleaned = match.group(1).strip()
+            else:
+                start = raw_text.find('{')
+                end = raw_text.rfind('}')
+                cleaned = raw_text[start:end+1] if start != -1 and end != -1 and end > start else raw_text
+
+            parsed = json.loads(cleaned)
             if isinstance(parsed, dict) and "trade_decisions" in parsed:
                 return parsed
         except Exception as se:
@@ -357,7 +365,7 @@ class TradingAgent:
     # Core decision loop
     # ------------------------------------------------------------------
 
-    def _decide(self, context: str, assets) -> dict:
+    async def _decide(self, context: str, assets) -> dict:
         """Dispatch decision request to the configured provider and enforce output contract."""
         system_prompt = self._build_system_prompt(assets)
         tools = self._build_tools() if self.enable_tools else None
@@ -370,16 +378,16 @@ class TradingAgent:
 
         # ---- Anthropic path (native tool-use + thinking) ----
         if is_anthropic:
-            return self._decide_anthropic(system_prompt, messages, tools, assets)
+            return await self._decide_anthropic(system_prompt, messages, tools, assets)
 
         # ---- OpenAI-compat path ----
-        return self._decide_openai_compat(system_prompt, messages, tools, assets)
+        return await self._decide_openai_compat(system_prompt, messages, tools, assets)
 
     # ------------------------------------------------------------------
     # Anthropic decision loop
     # ------------------------------------------------------------------
 
-    def _decide_anthropic(self, system_prompt: str, messages: list[dict],
+    async def _decide_anthropic(self, system_prompt: str, messages: list[dict],
                            tools, assets) -> dict:
         """Tool-use loop for the Anthropic provider."""
         assert isinstance(self.provider, AnthropicProvider)
@@ -412,7 +420,7 @@ class TradingAgent:
                 )
                 tool_results = []
                 for block in tool_use_blocks:
-                    result_str = self._handle_tool_call(block.name, block.input)
+                    result_str = await self._execute_tool(block.name, block.input)
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": block.id,
@@ -430,12 +438,12 @@ class TradingAgent:
     # OpenAI-compat decision loop
     # ------------------------------------------------------------------
 
-    def _decide_openai_compat(self, system_prompt: str, messages: list[dict],
+    async def _decide_openai_compat(self, system_prompt: str, messages: list[dict],
                                tools, assets) -> dict:
         """Tool-use loop for OpenAI / DeepSeek / OpenRouter / compat providers."""
         assert isinstance(self.provider, OpenAICompatProvider)
 
-        for iteration in range(6):
+        for iteration in range(15):
             try:
                 resp = self.provider.chat(
                     system=system_prompt,
@@ -451,7 +459,7 @@ class TradingAgent:
                 # Execute tools and build continuation messages
                 results = []
                 for tc in resp.tool_calls:
-                    result_str = self._handle_tool_call(tc["name"], tc["arguments"])
+                    result_str = await self._execute_tool(tc["name"], tc["arguments"])
                     results.append((tc["id"], result_str))
 
                 continuation = self.provider.build_tool_result_messages(resp, results)
@@ -473,12 +481,15 @@ class TradingAgent:
             logger.error("Empty LLM response")
             return self._empty_response(assets, "empty response")
 
-        cleaned = raw_text.strip()
-        if cleaned.startswith("```"):
-            first_nl = cleaned.index("\n")
-            cleaned = cleaned[first_nl + 1:]
-        if cleaned.endswith("```"):
-            cleaned = cleaned[:-3].rstrip()
+        raw_text = raw_text.strip()
+        import re
+        match = re.search(r'```(?:json)?\s*(.*?)\s*```', raw_text, re.DOTALL | re.IGNORECASE)
+        if match:
+            cleaned = match.group(1).strip()
+        else:
+            start = raw_text.find('{')
+            end = raw_text.rfind('}')
+            cleaned = raw_text[start:end+1] if start != -1 and end != -1 and end > start else raw_text
 
         try:
             parsed = json.loads(cleaned)
