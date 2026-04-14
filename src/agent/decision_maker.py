@@ -92,9 +92,10 @@ class TradingAgent:
         """Second LLM pass to strictly filter false-positives."""
         system_prompt = (
             "You are a highly conservative Chief Risk Officer evaluating an AI Quant's proposed trade.\n"
-            "Your ONLY job is to find reasons why this trade will fail. You have a zero-tolerance policy for mediocre setups.\n"
-            "Evaluate the volume events, VWAP positioning, Triple Screen alignment, and the current volatility regime.\n"
-            "If the setup has ANY structural flaws, or if volume is LOW into a breakout, or if it trades directly into VWAP resistance, you MUST reject it.\n\n"
+            "Your job is to independently verify that the trade meets the trading system's core parameters without hallucinating flaws.\n"
+            "Evaluate the volume events, VWAP positioning, Triple Screen alignment, and the current volatility regime based ONLY on the provided data.\n"
+            "Crucially: If price is > VWAP, do not call it 'VWAP resistance'. It is support. Do not invent reasons to reject if the provided data aligns with the Quant's rationale.\n"
+            "Reject the trade ONLY if there are genuine, explicit structural flaws in the provided data (e.g. explicitly LOW volume on breakout, or trading directly *up* into VWAP resistance when price < VWAP).\n\n"
             "Output ONLY a strict JSON object with two properties:\n"
             "  • \"approved\": boolean (true/false) indicating if the trade passes extreme scrutiny.\n"
             "  • \"reasoning\": string explaining exactly why you accepted or rejected it."
