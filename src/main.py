@@ -5,7 +5,7 @@ import argparse
 import pathlib
 sys.path.append(str(pathlib.Path(__file__).parent.parent))
 from src.agent.decision_maker import TradingAgent
-from src.indicators.local_indicators import compute_all, last_n, latest
+from src.indicators.local_indicators import compute_all, last_n, latest, analyze_events
 from src.risk_manager import RiskManager
 from src.trading.delta_api import DeltaExchangeAPI
 import asyncio
@@ -273,10 +273,16 @@ def main():
 
                     # Fetch candles from Delta Exchange and compute indicators locally
                     candles_5m = await exchange.get_candles(asset, "5m", 100)
+                    candles_1h = await exchange.get_candles(asset, "1h", 100)
                     candles_4h = await exchange.get_candles(asset, "4h", 100)
 
                     intra = compute_all(candles_5m)
+                    bridge = compute_all(candles_1h)
                     lt = compute_all(candles_4h)
+                    
+                    intraday_events = analyze_events(intra, current_price, "5m", candles_5m)
+                    bridge_events = analyze_events(bridge, current_price, "1h", candles_1h)
+                    macro_events = analyze_events(lt, current_price, "4h", candles_4h)
 
                     recent_mids = [entry["mid"] for entry in list(price_history.get(asset, []))[-10:]]
                     funding_annualized = round(funding * 24 * 365 * 100, 2) if funding else None
@@ -304,6 +310,9 @@ def main():
                             "macd_series": round_series(last_n(lt.get("macd", []), 10), 2),
                             "rsi_series": round_series(last_n(lt.get("rsi14", []), 10), 2),
                         },
+                        "intraday_events": intraday_events,
+                        "bridge_events": bridge_events,
+                        "macro_events": macro_events,
                         "open_interest": round_or_none(oi, 2),
                         "funding_rate": round_or_none(funding, 8),
                         "funding_annualized_pct": funding_annualized,
@@ -429,6 +438,13 @@ def main():
 
                         # --- RISK: Validate trade before execution ---
                         output["current_price"] = current_price
+                        
+                        asset_market = next((m for m in market_sections if m["asset"] == asset), None)
+                        if asset_market:
+                            atr_val = asset_market.get("long_term", {}).get("atr14")
+                            if atr_val is not None:
+                                output["atr"] = atr_val
+
                         allowed, reason, output = risk_mgr.validate_trade(
                             output, state, initial_account_value or 0
                         )

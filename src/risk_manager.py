@@ -21,6 +21,7 @@ class RiskManager:
         self.max_total_exposure_pct = float(CONFIG.get("max_total_exposure_pct") or 50)
         self.daily_loss_circuit_breaker_pct = float(CONFIG.get("daily_loss_circuit_breaker_pct") or 10)
         self.mandatory_sl_pct = float(CONFIG.get("mandatory_sl_pct") or 5)
+        self.atr_sl_multiplier = float(CONFIG.get("atr_sl_multiplier") or 1.5)
         self.max_concurrent_positions = int(CONFIG.get("max_concurrent_positions") or 10)
         self.min_balance_reserve_pct = float(CONFIG.get("min_balance_reserve_pct") or 20)
 
@@ -126,12 +127,18 @@ class RiskManager:
     # ------------------------------------------------------------------
 
     def enforce_stop_loss(self, sl_price: float | None, entry_price: float,
-                           is_buy: bool) -> float:
-        """Ensure every trade has a stop-loss. Auto-set if missing."""
+                           is_buy: bool, atr_val: float | None = None) -> float:
+        """Ensure every trade has a stop-loss. Auto-set using ATR if missing, fallback to pct."""
         if sl_price is not None:
             return sl_price
-        # Auto-set SL at mandatory_sl_pct from entry
-        sl_distance = entry_price * (self.mandatory_sl_pct / 100.0)
+            
+        if atr_val is not None and atr_val > 0:
+            sl_distance = atr_val * self.atr_sl_multiplier
+            logging.info("RISK: Auto-setting SL using %.1fx ATR (%.2f distance)", self.atr_sl_multiplier, sl_distance)
+        else:
+            sl_distance = entry_price * (self.mandatory_sl_pct / 100.0)
+            logging.info("RISK: Auto-setting SL using static %.1f%% (%.2f distance)", self.mandatory_sl_pct, sl_distance)
+
         if is_buy:
             return round(entry_price - sl_distance, 2)
         else:
@@ -263,12 +270,12 @@ class RiskManager:
 
         # 7. Enforce mandatory stop-loss
         current_price = float(trade.get("current_price", 0))
+        atr_val = trade.get("atr")
+        if atr_val is not None:
+            atr_val = float(atr_val)
         entry_price = current_price if current_price > 0 else 1.0
         sl_price = trade.get("sl_price")
-        enforced_sl = self.enforce_stop_loss(sl_price, entry_price, is_buy)
-        if sl_price is None:
-            logging.info("RISK: Auto-setting SL at %.2f (%.1f%% from entry)",
-                        enforced_sl, self.mandatory_sl_pct)
+        enforced_sl = self.enforce_stop_loss(sl_price, entry_price, is_buy, atr_val)
         trade = {**trade, "sl_price": enforced_sl}
 
         return True, "", trade

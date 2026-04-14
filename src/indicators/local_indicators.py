@@ -406,3 +406,73 @@ def latest(series: list):
         if v is not None:
             return v
     return None
+
+def analyze_events(indicators_dict: dict, current_price: float, timescale: str = "", candles: list = None) -> list:
+    """Analyze raw indicators to generate explicit string events for the LLM."""
+    events = []
+    
+    # 1. EMAs
+    ema20 = latest(indicators_dict.get("ema20", []))
+    ema50 = latest(indicators_dict.get("ema50", []))
+    
+    if ema20 and current_price:
+        if current_price > ema20:
+            events.append(f"Price is above EMA20 on {timescale} (Bullish).")
+        else:
+            events.append(f"Price is below EMA20 on {timescale} (Bearish).")
+            
+    if ema20 and ema50:
+        if ema20 > ema50:
+            events.append(f"EMA20 > EMA50 on {timescale} (Bullish Trend).")
+        else:
+            events.append(f"EMA20 < EMA50 on {timescale} (Bearish Trend).")
+
+    # 2. MACD
+    macd_vals = last_n(indicators_dict.get("macd", []), 2)
+    signal_vals = last_n(indicators_dict.get("macd_signal", []), 2)
+    if len(macd_vals) == 2 and len(signal_vals) == 2:
+        m_prev, m_curr = macd_vals
+        s_prev, s_curr = signal_vals
+        if m_prev <= s_prev and m_curr > s_curr:
+            events.append(f"MACD Bullish Cross just occurred on {timescale}!")
+        elif m_prev >= s_prev and m_curr < s_curr:
+            events.append(f"MACD Bearish Cross just occurred on {timescale}!")
+            
+    # 3. RSI
+    rsi_val = latest(indicators_dict.get("rsi14", []))
+    if rsi_val:
+        if rsi_val > 70:
+            events.append(f"RSI14 is Overbought ({rsi_val}) on {timescale} - reversal risk.")
+        elif rsi_val < 30:
+            events.append(f"RSI14 is Oversold ({rsi_val}) on {timescale} - bounce potential.")
+
+    # 4. ADX Regime
+    adx_val = latest(indicators_dict.get("adx", []))
+    if adx_val is not None:
+        if adx_val < 25:
+            events.append(f"ADX is {adx_val} on {timescale} (Choppy/Sideways regime).")
+        elif adx_val >= 25:
+            events.append(f"ADX is {adx_val} on {timescale} (Strong Trend regime).")
+
+    # 5. VWAP
+    vwap_val = latest(indicators_dict.get("vwap", []))
+    if vwap_val and current_price:
+        if current_price < vwap_val:
+            events.append(f"Price is below VWAP ({vwap_val}) on {timescale} - Resistance above.")
+        else:
+            events.append(f"Price is above VWAP ({vwap_val}) on {timescale} - Support below.")
+
+    # 6. Volume Spikes
+    if candles and len(candles) > 10:
+        vols = [float(c.get("volume", c.get("v", 0))) for c in candles]
+        recent_vol = vols[-1]
+        avg_vol = sum(vols[-10:-1]) / 9 if len(vols) >= 10 else 1
+        if avg_vol > 0:
+            vol_ratio = recent_vol / avg_vol
+            if vol_ratio >= 2.0:
+                events.append(f"Volume is exceptionally HIGH ({vol_ratio:.1f}x average) on {timescale} (High Conviction).")
+            elif vol_ratio <= 0.5:
+                events.append(f"Volume is very LOW ({vol_ratio:.1f}x average) on {timescale} (Weak/False Move).")
+
+    return events
+

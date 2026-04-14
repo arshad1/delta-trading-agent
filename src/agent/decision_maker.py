@@ -61,12 +61,68 @@ class TradingAgent:
         )
 
     # ------------------------------------------------------------------
-    # Public API
+    # Public API & Multi-Agent Routing
     # ------------------------------------------------------------------
 
     def decide_trade(self, assets, context):
-        """Decide for multiple assets in one LLM call."""
-        return self._decide(context, assets=assets)
+        """Quant decides for multiple assets, then Risk Reviewer filters buys/sells."""
+        quant_out = self._decide(context, assets=assets)
+        if not isinstance(quant_out, dict):
+            return quant_out
+            
+        reviewed_decisions = []
+        for dec in quant_out.get("trade_decisions", []):
+            if dec.get("action") in ("buy", "sell"):
+                asset = dec.get("asset", "unknown")
+                logger.info("Submitting %s %s proposal to Risk Reviewer...", asset, dec["action"])
+                review = self._review_decision(asset, context, dec)
+                if not review.get("approved"):
+                    dec["action"] = "hold"
+                    original_reason = dec.get("rationale", "")
+                    dec["rationale"] = f"RISK REJECTED: {review.get('reasoning')} | Quant: {original_reason}"
+                    logger.info("Risk Reviewer REJECTED trade for %s.", asset)
+                else:
+                    logger.info("Risk Reviewer APPROVED trade for %s.", asset)
+            reviewed_decisions.append(dec)
+            
+        quant_out["trade_decisions"] = reviewed_decisions
+        return quant_out
+
+    def _review_decision(self, asset: str, context: str, decision: dict) -> dict:
+        """Second LLM pass to strictly filter false-positives."""
+        system_prompt = (
+            "You are a highly conservative Chief Risk Officer evaluating an AI Quant's proposed trade.\n"
+            "Your ONLY job is to find reasons why this trade will fail. You have a zero-tolerance policy for mediocre setups.\n"
+            "Evaluate the volume events, VWAP positioning, Triple Screen alignment, and the current volatility regime.\n"
+            "If the setup has ANY structural flaws, or if volume is LOW into a breakout, or if it trades directly into VWAP resistance, you MUST reject it.\n\n"
+            "Output ONLY a strict JSON object with two properties:\n"
+            "  • \"approved\": boolean (true/false) indicating if the trade passes extreme scrutiny.\n"
+            "  • \"reasoning\": string explaining exactly why you accepted or rejected it."
+        )
+        messages = [{"role": "user", "content": f"Market Data Context:\n{context}\n\nProposed Trade by Quant for {asset}:\n{json.dumps(decision)}"}]
+        
+        for _ in range(3):
+            try:
+                resp = self.provider.chat(
+                    system=system_prompt,
+                    messages=messages,
+                    max_tokens=1000,
+                )
+                
+                raw_text = resp.text.strip()
+                if raw_text.startswith("```"):
+                    first_nl = raw_text.find("\n")
+                    raw_text = raw_text[first_nl + 1:] if first_nl != -1 else raw_text
+                if raw_text.endswith("```"):
+                    raw_text = raw_text[:-3].rstrip()
+                    
+                parsed = json.loads(raw_text)
+                if isinstance(parsed, dict) and "approved" in parsed:
+                    return parsed
+            except Exception as e:
+                logger.error("Reviewer LLM API error: %s", e)
+                
+        return {"approved": False, "reasoning": "Risk Reviewer failed to parse or respond properly. Auto-rejecting trade."}
 
     # ------------------------------------------------------------------
     # System prompt
@@ -79,10 +135,12 @@ class TradingAgent:
             "and funding constraints.\n"
             "You will receive market + account context for SEVERAL assets, including:\n"
             f"- assets = {json.dumps(list(assets))}\n"
-            "- per-asset intraday (5m) and higher-timeframe (4h) metrics\n"
+            "- explicitly computed technical events (e.g. MACD crosses) under 'intraday_events', 'bridge_events', and 'macro_events'\n"
+            "- per-asset intraday (5m) and higher-timeframe (4h) raw metrics\n"
             "- Active Trades with Exit Plans\n"
             "- Recent Trading History\n"
             "- Risk management limits (hard-enforced by the system, not just guidelines)\n\n"
+            "PAY EXTREME ATTENTION to the `intraday_events`, `bridge_events`, and `macro_events` arrays. Never hallucinate indicators; rely unconditionally on the explicit events provided in those arrays (e.g., 'Price is below VWAP', 'Volume is exceptionally HIGH').\n\n"
             "Always use the 'current time' provided in the user message to evaluate any time-based "
             "conditions, such as cooldown expirations or timed exit plans.\n\n"
             "Your goal: make decisive, first-principles decisions per asset that minimize churn "
@@ -93,7 +151,9 @@ class TradingAgent:
             "1) Respect prior plans: If an active trade has an exit_plan with explicit invalidation "
             "(e.g., \"close if 4h close above EMA50\"), DO NOT close or flip early unless that "
             "invalidation (or a stronger one) has occurred.\n"
-            "2) Hysteresis: Require stronger evidence to CHANGE a decision than to keep it. Only "
+            "2) Triple Screen Alignment & Volume: DO NOT take a trend-following trade unless BOTH the 4h (macro_events) and 1h (bridge_events) trends are aligned. "
+            "NEVER buy/sell a breakout if the recent volume events explicitly flag 'very LOW' volume (which signals a false move). Wait for VWAP alignment or volume spikes.\n"
+            "3) Hysteresis: Require stronger evidence to CHANGE a decision than to keep it. Only "
             "flip direction if BOTH:\n"
             "   a) Higher-timeframe structure supports the new direction (e.g., 4h EMA20 vs EMA50 "
             "and/or MACD regime), AND\n"

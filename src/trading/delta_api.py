@@ -232,9 +232,11 @@ class DeltaExchangeAPI:
             symbol: str = prod.get("symbol", "")
             underlying: str = prod.get("contract_unit_currency", "")
             if underlying and prod.get("contract_type") == "perpetual_futures":
-                # Prefer the standard XYZUSD symbol (not XYZUSDT or others)
-                if symbol.endswith("USD") and not symbol.endswith("USDT"):
-                    perp_map[underlying.upper()] = prod
+                if symbol.endswith("USD") or symbol.endswith("USDT"):
+                    # Only overwrite if we haven't found a preferred USD pair, or if we just found one.
+                    # This gives preference to USD over USDT if both exist, though usually they don't on the same network
+                    if underlying.upper() not in perp_map or symbol.endswith("USD"):
+                        perp_map[underlying.upper()] = prod
 
         logger.info(
             "Found %d perpetual market(s) on Delta: %s",
@@ -429,16 +431,16 @@ class DeltaExchangeAPI:
         candles = []
         for c in raw:
             candles.append({
-                "t": int(c.get("time", 0)),
-                "o": float(c.get("open", 0)),
-                "h": float(c.get("high", 0)),
-                "l": float(c.get("low", 0)),
-                "c": float(c.get("close", 0)),
-                "v": float(c.get("volume", 0)),
+                "time": int(c.get("time", 0)),
+                "open": float(c.get("open", 0)),
+                "high": float(c.get("high", 0)),
+                "low": float(c.get("low", 0)),
+                "close": float(c.get("close", 0)),
+                "volume": float(c.get("volume", 0)),
             })
 
         # Sorted oldest-first, trim to requested count
-        candles.sort(key=lambda x: x["t"])
+        candles.sort(key=lambda x: x["time"])
         return candles[-count:]
 
     # ------------------------------------------------------------------ #
