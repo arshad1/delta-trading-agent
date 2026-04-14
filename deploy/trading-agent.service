@@ -1,0 +1,31 @@
+[Unit]
+Description=Delta Trading Agent API
+After=network.target
+
+[Service]
+# User and Group under which the service will run.
+# Update 'ubuntu' to match your Linux username!
+User=ubuntu
+Group=www-data
+
+# The path to your repository root on the server
+WorkingDirectory=/opt/delta-trading-agent
+
+# Load environment variables (ensure .env exists here)
+EnvironmentFile=/opt/delta-trading-agent/.env
+
+# The command to start Gunicorn
+# Update `.venv/bin/gunicorn` if you installed into a different virtual environment path
+ExecStart=/opt/delta-trading-agent/.venv/bin/gunicorn -c gunicorn.conf.py src.api.app:app
+
+# Restart policies
+Restart=always
+RestartSec=5
+
+# Logging handling (systemd automatically logs to journalctl)
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=trading-agent
+
+[Install]
+WantedBy=multi-user.target

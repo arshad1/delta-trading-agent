@@ -55,11 +55,26 @@ class DeltaExchangeAPI:
     """Async REST client for Delta Exchange (India) perpetual futures."""
 
     def __init__(self) -> None:
-        self._api_key: str = CONFIG.get("delta_api_key", "")
-        self._api_secret: str = CONFIG.get("delta_api_secret", "")
         self._base_url: str = (
             CONFIG.get("delta_base_url") or TESTNET_URL
         ).rstrip("/")
+
+        # Auto-select credentials for the active environment
+        _is_testnet = "testnet" in self._base_url
+        if _is_testnet:
+            self._api_key: str = CONFIG.get("delta_testnet_api_key") or ""
+            self._api_secret: str = CONFIG.get("delta_testnet_api_secret") or ""
+        else:
+            self._api_key = CONFIG.get("delta_prod_api_key") or ""
+            self._api_secret = CONFIG.get("delta_prod_api_secret") or ""
+
+        env_label = "testnet" if _is_testnet else "prod"
+        logger.info(
+            "DeltaExchangeAPI initialised — env=%s  base_url=%s",
+            env_label,
+            self._base_url,
+        )
+
         self._leverage: int = int(CONFIG.get("delta_leverage") or 5)
         # {symbol_uppercase -> {id, contract_value, tick_size, symbol}}
         self._product_cache: dict[str, dict] = {}

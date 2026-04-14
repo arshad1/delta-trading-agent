@@ -72,13 +72,19 @@ CONFIG = {
     # ------------------------------------------------------------------ #
     # Delta Exchange                                                       #
     # ------------------------------------------------------------------ #
-    "delta_api_key": _get_env("DELTA_API_KEY", required=True),
-    "delta_api_secret": _get_env("DELTA_API_SECRET", required=True),
     # Testnet:  https://cdn-ind.testnet.deltaex.org
     # Mainnet:  https://api.india.delta.exchange
     "delta_base_url": _get_env(
         "DELTA_BASE_URL", "https://cdn-ind.testnet.deltaex.org"
     ),
+
+    # Per-environment credentials — managed via the dashboard DB, not .env
+    # (these env vars serve only as a last-resort fallback for CLI usage)
+    "delta_testnet_api_key":    _get_env("DELTA_TESTNET_API_KEY"),
+    "delta_testnet_api_secret": _get_env("DELTA_TESTNET_API_SECRET"),
+    "delta_prod_api_key":       _get_env("DELTA_PROD_API_KEY"),
+    "delta_prod_api_secret":    _get_env("DELTA_PROD_API_SECRET"),
+
     # Leverage to set on every traded product at startup (integer)
     "delta_leverage": _get_env("DELTA_LEVERAGE", "5"),
 

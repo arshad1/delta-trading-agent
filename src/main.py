@@ -626,7 +626,11 @@ def main():
         await runner.setup()
         site = web.TCPSite(runner, CFG.get("api_host"), int(CFG.get("api_port")))
         await site.start()
-        await run_loop()
+        try:
+            await run_loop()
+        finally:
+            await exchange.close()
+            await runner.cleanup()
 
     def calculate_total_return(state, trade_log):
         """Compute percent return relative to an assumed initial balance."""

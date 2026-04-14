@@ -10,3 +10,13 @@ rich>=14.2.0,<15.0.0
 
 # Required when LLM_PROVIDER is openai / deepseek / openrouter / openai_compat
 openai>=1.0.0,<2.0.0
+
+# ─── Web Dashboard API ────────────────────────────────────────────────────────
+fastapi>=0.115.0,<1.0.0
+uvicorn[standard]>=0.32.0,<1.0.0
+sqlalchemy[asyncio]>=2.0.0,<3.0.0
+aiomysql>=0.2.0,<1.0.0
+passlib[bcrypt]>=1.7.4,<2.0.0
+python-jose[cryptography]>=3.3.0,<4.0.0
+cryptography>=42.0.0
+gunicorn>=21.0.0

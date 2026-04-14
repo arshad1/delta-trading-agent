@@ -30,3 +30,12 @@ trading_history.log
 *.log
 diary.jsonl
 decisions.jsonl
+# Frontend / Node
+node_modules/
+dist/
+build/
+.npm/
+
+# Misc
+*.sqlite3
+
