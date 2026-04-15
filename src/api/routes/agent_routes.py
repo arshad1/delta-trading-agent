@@ -26,22 +26,40 @@ router = APIRouter(prefix="/api/agent", tags=["agent"])
 
 # ─── In-memory agent process state ───────────────────────────────────────────
 
-_agent_proc: Optional[subprocess.Popen] = None
-_agent_started_at: Optional[float] = None
-
+# We use a state file instead of in-memory globals so that the agent state 
+# persists across uvicorn reloads or multiple Gunicorn workers.
 ROOT_DIR = pathlib.Path(__file__).parent.parent.parent.parent
+STATE_PATH = ROOT_DIR / ".agent_state"
 DIARY_PATH = ROOT_DIR / "diary.jsonl"
 DECISIONS_PATH = ROOT_DIR / "decisions.jsonl"
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
+def _get_agent_state() -> Optional[dict]:
+    if not STATE_PATH.exists():
+        return None
+    try:
+        return json.loads(STATE_PATH.read_text())
+    except Exception:
+        return None
+
+
 def _is_agent_running() -> bool:
-    global _agent_proc
-    if _agent_proc is None:
+    state = _get_agent_state()
+    if not state or "pid" not in state:
         return False
-    poll = _agent_proc.poll()
-    return poll is None  # None means still running
+        
+    pid = state["pid"]
+    try:
+        import psutil
+        return psutil.pid_exists(pid)
+    except ImportError:
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
 
 
 def _read_jsonl_tail(path: pathlib.Path, limit: int = 100) -> list:
@@ -67,8 +85,16 @@ async def get_status(
 ):
     running = _is_agent_running()
     uptime = None
-    if running and _agent_started_at:
-        uptime = time.time() - _agent_started_at
+    state = _get_agent_state()
+    
+    if running and state and "started_at" in state:
+        uptime = time.time() - state["started_at"]
+    elif state and not running:
+        # Cleanup stale state wrapper
+        try:
+            STATE_PATH.unlink()
+        except OSError:
+            pass
 
     last_cycle = None
     decisions = _read_jsonl_tail(DECISIONS_PATH, 1)
@@ -99,7 +125,6 @@ async def start_agent(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    global _agent_proc, _agent_started_at
     if _is_agent_running():
         raise HTTPException(status_code=400, detail="Agent is already running")
 
@@ -124,34 +149,57 @@ async def start_agent(
         if v:  # only export non-empty values
             env_vars[k] = str(v)
 
-    _agent_proc = subprocess.Popen(
+    proc = subprocess.Popen(
         cmd,
         cwd=str(ROOT_DIR),
         stdout=open(ROOT_DIR / "agent.log", "a"),
         stderr=subprocess.STDOUT,
         env=env_vars,
     )
-    _agent_started_at = time.time()
-    logger.info("Agent started with PID %d", _agent_proc.pid)
-    return {"message": "Agent started", "pid": _agent_proc.pid}
+    
+    # Save the agent process PID and start time
+    started_at = time.time()
+    STATE_PATH.write_text(json.dumps({"pid": proc.pid, "started_at": started_at}))
+    
+    logger.info("Agent started with PID %d", proc.pid)
+    return {"message": "Agent started", "pid": proc.pid}
 
 
 @router.post("/stop")
 async def stop_agent(_: User = Depends(get_current_user)):
-    global _agent_proc, _agent_started_at
     if not _is_agent_running():
         raise HTTPException(status_code=400, detail="Agent is not running")
+        
+    state = _get_agent_state()
+    if not state or "pid" not in state:
+        raise HTTPException(status_code=400, detail="Agent state is missing or corrupted")
+        
+    pid = state["pid"]
     try:
-        if sys.platform == "win32":
-            _agent_proc.terminate()
-        else:
-            _agent_proc.send_signal(signal.SIGTERM)
-        _agent_proc.wait(timeout=10)
+        try:
+            import psutil
+            p = psutil.Process(pid)
+            p.terminate()
+            p.wait(timeout=10)
+        except ImportError:
+            if sys.platform == "win32":
+                os.kill(pid, signal.SIGTERM)
+            else:
+                os.kill(pid, signal.SIGTERM)
     except Exception as exc:
         logger.warning("Could not stop agent gracefully: %s", exc)
-        _agent_proc.kill()
-    _agent_proc = None
-    _agent_started_at = None
+        # Fallback to extreme kill
+        try:
+            os.kill(pid, signal.SIGKILL if not sys.platform == "win32" else signal.SIGTERM)
+        except OSError:
+            pass
+            
+    try:
+        if STATE_PATH.exists():
+            STATE_PATH.unlink()
+    except OSError:
+        pass
+
     return {"message": "Agent stopped"}
 
 
