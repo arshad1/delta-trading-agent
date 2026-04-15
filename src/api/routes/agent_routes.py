@@ -111,7 +111,7 @@ async def get_status(
 
     return AgentStatusOut(
         running=running,
-        pid=_agent_proc.pid if running else None,
+        pid=state.get("pid") if (running and state) else None,
         uptime_seconds=uptime,
         last_cycle=last_cycle,
         environment=env,
