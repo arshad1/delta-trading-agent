@@ -62,5 +62,7 @@ export const api = {
   stopAgent: () => request('POST', '/agent/stop'),
   getDiary: (limit = 100) => request('GET', `/agent/diary?limit=${limit}`),
   getDecisions: (limit = 50) => request('GET', `/agent/decisions?limit=${limit}`),
+  clearDecisions: () => request('POST', '/agent/decisions/clear'),
   getLogs: (lines = 200) => request('GET', `/agent/logs?lines=${lines}`),
+  clearLogs: () => request('POST', '/agent/logs/clear'),
 }

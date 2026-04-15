@@ -75,6 +75,32 @@ export default function Dashboard({ onAgentStatusChange }) {
     }
   }
 
+  const handleClearLogs = async () => {
+    setActionLoading(true)
+    setError('')
+    try {
+      await api.clearLogs()
+      setLogs('')
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const handleClearDecisions = async () => {
+    setActionLoading(true)
+    setError('')
+    try {
+      await api.clearDecisions()
+      setDecisions([])
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
   if (loading) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 400 }}>
       <div className="spinner" style={{ width: 32, height: 32 }} />
@@ -151,7 +177,16 @@ export default function Dashboard({ onAgentStatusChange }) {
         <div className="card">
           <div className="card-header">
             <span className="card-title">Recent LLM Decisions ({decisions.length})</span>
-            <button className="btn btn-secondary btn-sm" onClick={fetchAll}>↻ Refresh</button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-secondary btn-sm" onClick={fetchAll}>↻ Refresh</button>
+              <button
+                className="btn btn-danger btn-sm"
+                onClick={handleClearDecisions}
+                disabled={actionLoading}
+              >
+                {actionLoading ? <><span className="spinner" /> Working…</> : 'Clear Decisions'}
+              </button>
+            </div>
           </div>
           {decisions.length === 0 ? (
             <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>No decisions yet. Start the agent to begin trading.</p>
@@ -251,7 +286,16 @@ export default function Dashboard({ onAgentStatusChange }) {
         <div className="card">
           <div className="card-header">
             <span className="card-title">Agent Process Logs</span>
-            <button className="btn btn-secondary btn-sm" onClick={fetchAll}>↻ Refresh</button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-secondary btn-sm" onClick={fetchAll}>↻ Refresh</button>
+              <button
+                className="btn btn-danger btn-sm"
+                onClick={handleClearLogs}
+                disabled={actionLoading}
+              >
+                {actionLoading ? <><span className="spinner" /> Working…</> : 'Clear Logs'}
+              </button>
+            </div>
           </div>
           <div className="log-viewer">{logs || 'No logs yet. Start the agent to see output here.'}</div>
         </div>

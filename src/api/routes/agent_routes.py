@@ -219,6 +219,16 @@ async def get_decisions(
     return {"entries": _read_jsonl_tail(DECISIONS_PATH, limit)}
 
 
+@router.post("/decisions/clear")
+async def clear_decisions(_: User = Depends(get_current_user)):
+    try:
+        DECISIONS_PATH.write_text("", encoding="utf-8")
+    except Exception as exc:
+        logger.exception("Failed to clear decisions log")
+        raise HTTPException(status_code=500, detail=f"Failed to clear decisions: {exc}") from exc
+    return {"message": "Recent LLM decisions cleared"}
+
+
 @router.get("/logs")
 async def get_logs(
     lines: int = 200,
@@ -230,3 +240,14 @@ async def get_logs(
     content = log_path.read_text(encoding="utf-8", errors="replace")
     tail_lines = content.strip().splitlines()[-lines:]
     return {"content": "\n".join(tail_lines)}
+
+
+@router.post("/logs/clear")
+async def clear_logs(_: User = Depends(get_current_user)):
+    log_path = ROOT_DIR / "agent.log"
+    try:
+        log_path.write_text("", encoding="utf-8")
+    except Exception as exc:
+        logger.exception("Failed to clear agent logs")
+        raise HTTPException(status_code=500, detail=f"Failed to clear logs: {exc}") from exc
+    return {"message": "Agent logs cleared"}
