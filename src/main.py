@@ -5,7 +5,13 @@ import argparse
 import pathlib
 sys.path.append(str(pathlib.Path(__file__).parent.parent))
 from src.agent.decision_maker import TradingAgent
-from src.indicators.local_indicators import compute_all, last_n, latest, analyze_events
+from src.indicators.local_indicators import (
+    compute_all,
+    last_n,
+    latest,
+    analyze_events,
+    identify_support_resistance,
+)
 from src.risk_manager import RiskManager
 from src.trading.delta_api import DeltaExchangeAPI
 import asyncio
@@ -279,6 +285,7 @@ def main():
                     intra = compute_all(candles_5m)
                     bridge = compute_all(candles_1h)
                     lt = compute_all(candles_4h)
+                    sr_4h = identify_support_resistance(candles_4h, current_price)
                     
                     intraday_events = analyze_events(intra, current_price, "5m", candles_5m)
                     bridge_events = analyze_events(bridge, current_price, "1h", candles_1h)
@@ -309,6 +316,12 @@ def main():
                             "atr14": round_or_none(latest(lt.get("atr14", [])), 2),
                             "macd_series": round_series(last_n(lt.get("macd", []), 10), 2),
                             "rsi_series": round_series(last_n(lt.get("rsi14", []), 10), 2),
+                        },
+                        "levels_4h": {
+                            "support": round_or_none(sr_4h.get("support"), 2),
+                            "resistance": round_or_none(sr_4h.get("resistance"), 2),
+                            "support_distance_pct": round_or_none(sr_4h.get("support_distance_pct"), 4),
+                            "resistance_distance_pct": round_or_none(sr_4h.get("resistance_distance_pct"), 4),
                         },
                         "intraday_events": intraday_events,
                         "bridge_events": bridge_events,

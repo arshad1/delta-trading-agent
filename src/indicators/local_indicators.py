@@ -407,6 +407,68 @@ def latest(series: list):
             return v
     return None
 
+
+def identify_support_resistance(
+    candles: list[dict],
+    current_price: float,
+    lookback: int = 40,
+    swing_window: int = 2,
+) -> dict:
+    """Find nearby support/resistance levels from recent swing highs/lows.
+
+    Returns the nearest support below price and nearest resistance above price,
+    plus distances as percentages from the current price.
+    """
+    if not candles or current_price <= 0:
+        return {
+            "support": None,
+            "resistance": None,
+            "support_distance_pct": None,
+            "resistance_distance_pct": None,
+        }
+
+    sample = candles[-lookback:] if len(candles) > lookback else candles[:]
+    if len(sample) < swing_window * 2 + 1:
+        return {
+            "support": None,
+            "resistance": None,
+            "support_distance_pct": None,
+            "resistance_distance_pct": None,
+        }
+
+    swing_lows: list[float] = []
+    swing_highs: list[float] = []
+    for idx in range(swing_window, len(sample) - swing_window):
+        candle = sample[idx]
+        low = candle["low"]
+        high = candle["high"]
+        left = sample[idx - swing_window: idx]
+        right = sample[idx + 1: idx + swing_window + 1]
+
+        if all(low <= other["low"] for other in left + right):
+            swing_lows.append(float(low))
+        if all(high >= other["high"] for other in left + right):
+            swing_highs.append(float(high))
+
+    support = max((level for level in swing_lows if level <= current_price), default=None)
+    resistance = min((level for level in swing_highs if level >= current_price), default=None)
+
+    support_distance_pct = (
+        round(((current_price - support) / current_price) * 100, 4)
+        if support is not None else None
+    )
+    resistance_distance_pct = (
+        round(((resistance - current_price) / current_price) * 100, 4)
+        if resistance is not None else None
+    )
+
+    return {
+        "support": round(support, 6) if support is not None else None,
+        "resistance": round(resistance, 6) if resistance is not None else None,
+        "support_distance_pct": support_distance_pct,
+        "resistance_distance_pct": resistance_distance_pct,
+    }
+
 def analyze_events(indicators_dict: dict, current_price: float, timescale: str = "", candles: list = None) -> list:
     """Analyze raw indicators to generate explicit string events for the LLM."""
     events = []
@@ -473,6 +535,32 @@ def analyze_events(indicators_dict: dict, current_price: float, timescale: str =
                 events.append(f"Volume is exceptionally HIGH ({vol_ratio:.1f}x average) on {timescale} (High Conviction).")
             elif vol_ratio <= 0.5:
                 events.append(f"Volume is very LOW ({vol_ratio:.1f}x average) on {timescale} (Weak/False Move).")
+
+    # 7. Swing support / resistance
+    if candles and len(candles) >= 10 and current_price:
+        levels = identify_support_resistance(candles, current_price)
+        support = levels.get("support")
+        resistance = levels.get("resistance")
+        support_distance_pct = levels.get("support_distance_pct")
+        resistance_distance_pct = levels.get("resistance_distance_pct")
+
+        if support is not None:
+            events.append(
+                f"Nearest {timescale} support is {support} ({support_distance_pct:.2f}% below current price)."
+            )
+            if support_distance_pct is not None and support_distance_pct <= 1.0:
+                events.append(
+                    f"Price is testing {timescale} support ({support}) within {support_distance_pct:.2f}%."
+                )
+
+        if resistance is not None:
+            events.append(
+                f"Nearest {timescale} resistance is {resistance} ({resistance_distance_pct:.2f}% above current price)."
+            )
+            if resistance_distance_pct is not None and resistance_distance_pct <= 1.0:
+                events.append(
+                    f"Price is testing {timescale} resistance ({resistance}) within {resistance_distance_pct:.2f}%."
+                )
 
     return events
 
