@@ -411,7 +411,7 @@ def latest(series: list):
 def identify_support_resistance(
     candles: list[dict],
     current_price: float,
-    lookback: int = 40,
+    lookback: int = 60,
     swing_window: int = 2,
 ) -> dict:
     """Find nearby support/resistance levels from recent swing highs/lows.
@@ -524,6 +524,24 @@ def analyze_events(indicators_dict: dict, current_price: float, timescale: str =
         else:
             events.append(f"Price is above VWAP ({vwap_val}) on {timescale} - Support below.")
 
+    # 3b. RSI momentum zones (between extremes)
+    if rsi_val:
+        if 50 < rsi_val <= 70:
+            events.append(f"RSI14 is in Bullish Momentum zone ({rsi_val:.1f}) on {timescale} - trend continuation bias.")
+        elif 30 <= rsi_val < 50:
+            events.append(f"RSI14 is in Bearish Momentum zone ({rsi_val:.1f}) on {timescale} - trend continuation bias.")
+
+    # 4b. MACD histogram direction
+    macd_hist = indicators_dict.get("macd_histogram", [])
+    if len(macd_hist) >= 2:
+        h_prev = macd_hist[-2]
+        h_curr = macd_hist[-1]
+        if h_prev is not None and h_curr is not None:
+            if h_curr > h_prev and h_curr > 0:
+                events.append(f"MACD Histogram expanding bullish on {timescale} - upward momentum building.")
+            elif h_curr < h_prev and h_curr < 0:
+                events.append(f"MACD Histogram expanding bearish on {timescale} - downward momentum building.")
+
     # 6. Volume Spikes
     if candles and len(candles) > 10:
         vols = [float(c.get("volume", c.get("v", 0))) for c in candles]
@@ -531,10 +549,12 @@ def analyze_events(indicators_dict: dict, current_price: float, timescale: str =
         avg_vol = sum(vols[-10:-1]) / 9 if len(vols) >= 10 else 1
         if avg_vol > 0:
             vol_ratio = recent_vol / avg_vol
-            if vol_ratio >= 2.0:
-                events.append(f"Volume is exceptionally HIGH ({vol_ratio:.1f}x average) on {timescale} (High Conviction).")
-            elif vol_ratio <= 0.5:
+            if vol_ratio >= 1.3:
+                events.append(f"Volume is HIGH ({vol_ratio:.1f}x average) on {timescale} (High Conviction).")
+            elif vol_ratio <= 0.4:
                 events.append(f"Volume is very LOW ({vol_ratio:.1f}x average) on {timescale} (Weak/False Move).")
+            elif 0.8 <= vol_ratio < 1.3:
+                events.append(f"Volume is MODERATE ({vol_ratio:.1f}x average) on {timescale} (Neutral).")
 
     # 7. Swing support / resistance
     if candles and len(candles) >= 10 and current_price:
@@ -548,18 +568,18 @@ def analyze_events(indicators_dict: dict, current_price: float, timescale: str =
             events.append(
                 f"Nearest {timescale} support is {support} ({support_distance_pct:.2f}% below current price)."
             )
-            if support_distance_pct is not None and support_distance_pct <= 1.0:
+            if support_distance_pct is not None and support_distance_pct <= 2.0:
                 events.append(
-                    f"Price is testing {timescale} support ({support}) within {support_distance_pct:.2f}%."
+                    f"Price is testing {timescale} support ({support}) within {support_distance_pct:.2f}% — level-touch entry zone."
                 )
 
         if resistance is not None:
             events.append(
                 f"Nearest {timescale} resistance is {resistance} ({resistance_distance_pct:.2f}% above current price)."
             )
-            if resistance_distance_pct is not None and resistance_distance_pct <= 1.0:
+            if resistance_distance_pct is not None and resistance_distance_pct <= 2.0:
                 events.append(
-                    f"Price is testing {timescale} resistance ({resistance}) within {resistance_distance_pct:.2f}%."
+                    f"Price is testing {timescale} resistance ({resistance}) within {resistance_distance_pct:.2f}% — level-touch entry zone."
                 )
 
     return events

@@ -343,7 +343,7 @@ def main():
                     "invocation_count": invocation_count
                 }),
                 ("account", dashboard),
-                ("risk_limits", risk_mgr.get_risk_summary()),
+                ("risk_limits", risk_mgr.get_risk_summary(account_value=account_value)),
                 ("market_data", market_sections),
                 ("instructions", {
                     "assets": args.assets,

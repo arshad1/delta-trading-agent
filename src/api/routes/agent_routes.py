@@ -229,6 +229,16 @@ async def clear_decisions(_: User = Depends(get_current_user)):
     return {"message": "Recent LLM decisions cleared"}
 
 
+@router.post("/diary/clear")
+async def clear_diary(_: User = Depends(get_current_user)):
+    try:
+        DIARY_PATH.write_text("", encoding="utf-8")
+    except Exception as exc:
+        logger.exception("Failed to clear trade diary")
+        raise HTTPException(status_code=500, detail=f"Failed to clear diary: {exc}") from exc
+    return {"message": "Trade diary cleared"}
+
+
 @router.get("/logs")
 async def get_logs(
     lines: int = 200,

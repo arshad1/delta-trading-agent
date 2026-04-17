@@ -280,9 +280,9 @@ class RiskManager:
 
         return True, "", trade
 
-    def get_risk_summary(self) -> dict:
+    def get_risk_summary(self, account_value: float = 0) -> dict:
         """Return current risk parameters for inclusion in LLM context."""
-        return {
+        summary = {
             "max_position_pct": self.max_position_pct,
             "max_loss_per_position_pct": self.max_loss_per_position_pct,
             "max_leverage": self.max_leverage,
@@ -293,3 +293,10 @@ class RiskManager:
             "min_balance_reserve_pct": self.min_balance_reserve_pct,
             "circuit_breaker_active": self.circuit_breaker_active,
         }
+        if account_value > 0:
+            max_alloc = round(account_value * (self.max_position_pct / 100.0), 2)
+            suggested = round(max_alloc * 0.5, 2)
+            summary["account_value_usd"] = round(account_value, 2)
+            summary["max_allocation_usd"] = max_alloc
+            summary["suggested_allocation_usd"] = suggested
+        return summary

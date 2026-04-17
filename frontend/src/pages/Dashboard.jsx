@@ -101,6 +101,19 @@ export default function Dashboard({ onAgentStatusChange }) {
     }
   }
 
+  const handleClearDiary = async () => {
+    setActionLoading(true)
+    setError('')
+    try {
+      await api.clearDiary()
+      setDiary([])
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
   if (loading) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 400 }}>
       <div className="spinner" style={{ width: 32, height: 32 }} />
@@ -239,7 +252,16 @@ export default function Dashboard({ onAgentStatusChange }) {
         <div className="card">
           <div className="card-header">
             <span className="card-title">Trade Diary ({diary.length})</span>
-            <button className="btn btn-secondary btn-sm" onClick={fetchAll}>↻ Refresh</button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-secondary btn-sm" onClick={fetchAll}>↻ Refresh</button>
+              <button
+                className="btn btn-danger btn-sm"
+                onClick={handleClearDiary}
+                disabled={actionLoading}
+              >
+                {actionLoading ? <><span className="spinner" /> Working…</> : 'Clear Diary'}
+              </button>
+            </div>
           </div>
           {diary.length === 0 ? (
             <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>No diary entries yet.</p>
