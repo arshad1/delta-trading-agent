@@ -149,13 +149,18 @@ async def start_agent(
         if v:  # only export non-empty values
             env_vars[k] = str(v)
 
-    proc = subprocess.Popen(
-        cmd,
+    popen_kwargs = dict(
         cwd=str(ROOT_DIR),
         stdout=open(ROOT_DIR / "agent.log", "a"),
         stderr=subprocess.STDOUT,
         env=env_vars,
     )
+    # On Windows, isolate the child from the parent's console so that
+    # CTRL+C / console events don't propagate back and kill the API server.
+    if sys.platform == "win32":
+        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+
+    proc = subprocess.Popen(cmd, **popen_kwargs)
     
     # Save the agent process PID and start time
     started_at = time.time()
