@@ -41,3 +41,4 @@ build/
 # Misc
 *.sqlite3
 
+.agent_state
