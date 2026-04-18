@@ -32,8 +32,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 
 
 def clear_terminal():
-    """Clear the terminal screen on Windows or POSIX systems."""
-    os.system('cls' if os.name == 'nt' else 'clear')
+    """Clear the terminal screen, but only when running interactively."""
+    if sys.stdout.isatty():
+        os.system('cls' if os.name == 'nt' else 'clear')
 
 
 def get_interval_seconds(interval_str):
