@@ -26,6 +26,7 @@ class RiskManager:
         self.atr_sl_multiplier = float(CONFIG.get("atr_sl_multiplier") or 1.5)
         self.max_concurrent_positions = int(CONFIG.get("max_concurrent_positions") or 10)
         self.min_balance_reserve_pct = float(CONFIG.get("min_balance_reserve_pct") or 20)
+        self.min_risk_reward = float(CONFIG.get("min_risk_reward") or 1.5)
 
         # Daily tracking
         self.daily_high_value = None
@@ -116,6 +117,27 @@ class RiskManager:
         if current_count >= self.max_concurrent_positions:
             return False, (
                 f"Already at max concurrent positions ({self.max_concurrent_positions})"
+            )
+        return True, ""
+
+    def check_risk_reward(self, entry: float, tp: float | None, sl: float | None,
+                           is_buy: bool) -> tuple[bool, str]:
+        """Reject trades where the TP/SL ratio is below min_risk_reward."""
+        if tp is None or sl is None:
+            return True, ""  # SL will be auto-set later; skip check here
+        if is_buy:
+            reward = tp - entry
+            risk = entry - sl
+        else:
+            reward = entry - tp
+            risk = sl - entry
+        if risk <= 0:
+            return False, f"Invalid SL: risk distance is zero or negative (entry={entry}, sl={sl})"
+        rr = reward / risk
+        if rr < self.min_risk_reward:
+            return False, (
+                f"Risk/reward {rr:.2f} is below minimum {self.min_risk_reward} "
+                f"(reward=${reward:.2f}, risk=${risk:.2f})"
             )
         return True, ""
 
@@ -287,6 +309,17 @@ class RiskManager:
         enforced_sl = self.enforce_stop_loss(sl_price, entry_price, is_buy, atr_val)
         trade = {**trade, "sl_price": enforced_sl}
 
+        # 8. Risk/reward check (runs after SL is guaranteed to exist)
+        tp_price = trade.get("tp_price")
+        ok, reason = self.check_risk_reward(
+            entry_price,
+            float(tp_price) if tp_price else None,
+            float(enforced_sl),
+            is_buy,
+        )
+        if not ok:
+            return False, reason, trade
+
         return True, "", trade
 
     def get_risk_summary(self, account_value: float = 0) -> dict:
@@ -300,6 +333,7 @@ class RiskManager:
             "mandatory_sl_pct": self.mandatory_sl_pct,
             "max_concurrent_positions": self.max_concurrent_positions,
             "min_balance_reserve_pct": self.min_balance_reserve_pct,
+            "min_risk_reward": self.min_risk_reward,
             "circuit_breaker_active": self.circuit_breaker_active,
         }
         if account_value > 0:

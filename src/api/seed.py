@@ -55,6 +55,7 @@ SETTING_DEFINITIONS = [
     {"key": "MANDATORY_SL_PCT",            "category": "risk", "label": "Mandatory SL %",          "description": "Auto SL distance % if LLM doesn't set one (default: 5)", "is_secret": False},
     {"key": "MAX_CONCURRENT_POSITIONS",    "category": "risk", "label": "Max Concurrent Positions","description": "Max simultaneous positions (default: 10)", "is_secret": False},
     {"key": "MIN_BALANCE_RESERVE_PCT",     "category": "risk", "label": "Min Balance Reserve %",   "description": "Don't trade below this % of initial balance (default: 10)", "is_secret": False},
+    {"key": "MIN_RISK_REWARD",             "category": "risk", "label": "Min Risk/Reward Ratio",   "description": "Minimum TP/SL ratio required to allow a trade, e.g. 1.5 means TP must be 1.5× the SL distance (default: 1.5)", "is_secret": False},
 
     # Advanced
     {"key": "API_HOST",  "category": "advanced", "label": "API Host", "description": "Host for the aiohttp data API (default: 0.0.0.0)", "is_secret": False},

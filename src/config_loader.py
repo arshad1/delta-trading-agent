@@ -135,6 +135,7 @@ CONFIG = {
     "mandatory_sl_pct": _get_env("MANDATORY_SL_PCT", "5"),
     "max_concurrent_positions": _get_env("MAX_CONCURRENT_POSITIONS", "10"),
     "min_balance_reserve_pct": _get_env("MIN_BALANCE_RESERVE_PCT", "10"),
+    "min_risk_reward": _get_env("MIN_RISK_REWARD", "1.5"),
 
     # ------------------------------------------------------------------ #
     # API server                                                           #
