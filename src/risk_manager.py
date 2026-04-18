@@ -18,6 +18,8 @@ class RiskManager:
         self.max_position_pct = float(CONFIG.get("max_position_pct") or 10)
         self.max_loss_per_position_pct = float(CONFIG.get("max_loss_per_position_pct") or 20)
         self.max_leverage = float(CONFIG.get("max_leverage") or 10)
+        # Actual exchange leverage — used to compute real margin requirement
+        self.exchange_leverage = float(CONFIG.get("delta_leverage") or 5)
         self.max_total_exposure_pct = float(CONFIG.get("max_total_exposure_pct") or 50)
         self.daily_loss_circuit_breaker_pct = float(CONFIG.get("daily_loss_circuit_breaker_pct") or 10)
         self.mandatory_sl_pct = float(CONFIG.get("mandatory_sl_pct") or 5)
@@ -47,31 +49,38 @@ class RiskManager:
     # ------------------------------------------------------------------
 
     def check_position_size(self, alloc_usd: float, account_value: float) -> tuple[bool, str]:
-        """Single position cannot exceed max_position_pct of account."""
+        """Single position margin cannot exceed max_position_pct of account.
+
+        alloc_usd is the notional value; we divide by leverage to get the
+        actual margin required before comparing against the account limit.
+        """
         if account_value <= 0:
             return False, "Account value is zero or negative"
-        max_alloc = account_value * (self.max_position_pct / 100.0)
-        if alloc_usd > max_alloc:
+        margin_required = alloc_usd / max(self.exchange_leverage, 1)
+        max_margin = account_value * (self.max_position_pct / 100.0)
+        if margin_required > max_margin:
             return False, (
-                f"Allocation ${alloc_usd:.2f} exceeds {self.max_position_pct}% "
-                f"of account (${max_alloc:.2f})"
+                f"Margin required ${margin_required:.2f} exceeds {self.max_position_pct}% "
+                f"of account (${max_margin:.2f})"
             )
         return True, ""
 
     def check_total_exposure(self, positions: list[dict], new_alloc: float,
                               account_value: float) -> tuple[bool, str]:
-        """Sum of all position notionals + new allocation cannot exceed max_total_exposure_pct."""
-        current_exposure = 0.0
+        """Total margin used across all positions cannot exceed max_total_exposure_pct of account."""
+        current_margin = 0.0
         for pos in positions:
             qty = abs(float(pos.get("quantity") or pos.get("szi") or 0))
             entry = float(pos.get("entry_price") or pos.get("entryPx") or 0)
-            current_exposure += qty * entry
-        total = current_exposure + new_alloc
-        max_exposure = account_value * (self.max_total_exposure_pct / 100.0)
-        if total > max_exposure:
+            notional = qty * entry
+            current_margin += notional / max(self.exchange_leverage, 1)
+        new_margin = new_alloc / max(self.exchange_leverage, 1)
+        total_margin = current_margin + new_margin
+        max_margin = account_value * (self.max_total_exposure_pct / 100.0)
+        if total_margin > max_margin:
             return False, (
-                f"Total exposure ${total:.2f} would exceed {self.max_total_exposure_pct}% "
-                f"of account (${max_exposure:.2f})"
+                f"Total margin ${total_margin:.2f} would exceed {self.max_total_exposure_pct}% "
+                f"of account (${max_margin:.2f})"
             )
         return True, ""
 
@@ -237,12 +246,12 @@ class RiskManager:
         if not ok:
             return False, reason, trade
 
-        # 3. Position size limit
+        # 3. Position size limit (checked in margin terms, capped in notional terms)
         ok, reason = self.check_position_size(alloc_usd, account_value)
         if not ok:
-            # Cap allocation instead of rejecting
-            max_alloc = account_value * (self.max_position_pct / 100.0)
-            # But never below Hyperliquid's $10 minimum
+            # Max notional = max_margin * leverage
+            max_margin = account_value * (self.max_position_pct / 100.0)
+            max_alloc = max_margin * max(self.exchange_leverage, 1)
             if max_alloc < 11.0:
                 max_alloc = 11.0
             logging.warning("RISK: Capping allocation from $%.2f to $%.2f", alloc_usd, max_alloc)
@@ -294,7 +303,8 @@ class RiskManager:
             "circuit_breaker_active": self.circuit_breaker_active,
         }
         if account_value > 0:
-            max_alloc = round(account_value * (self.max_position_pct / 100.0), 2)
+            max_margin = account_value * (self.max_position_pct / 100.0)
+            max_alloc = round(max_margin * max(self.exchange_leverage, 1), 2)
             suggested = round(max_alloc * 0.5, 2)
             summary["account_value_usd"] = round(account_value, 2)
             summary["max_allocation_usd"] = max_alloc
