@@ -1,4 +1,6 @@
 # Environments
+.agent_state
+.claude/
 .env
 .env.*
 !.env.example
