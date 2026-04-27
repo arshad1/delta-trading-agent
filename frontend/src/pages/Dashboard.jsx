@@ -37,12 +37,12 @@ export default function Dashboard({ onAgentStatusChange }) {
   const [activeTab, setActiveTab] = useState('decisions')
   const logViewerRef = useRef(null)
 
-  // Auto-scroll log viewer to bottom when new logs arrive
+  // Auto-scroll log viewer to bottom when new logs arrive or when switching to the logs tab
   useEffect(() => {
     if (logViewerRef.current) {
       logViewerRef.current.scrollTop = logViewerRef.current.scrollHeight
     }
-  }, [logs])
+  }, [logs, activeTab])
 
   const fetchAll = useCallback(async () => {
     try {
