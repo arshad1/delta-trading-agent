@@ -35,6 +35,11 @@ class TradingAgent:
         self.thinking_budget: int = int(CONFIG.get("thinking_budget_tokens") or 10000)
         self.enable_tools: bool = bool(CONFIG.get("enable_tool_calling", False))
 
+        # When thinking is enabled, ensure max_tokens is large enough
+        # (reasoning models use tokens for their internal thought process)
+        if self.thinking_enabled:
+            self.max_tokens = max(self.max_tokens, 16000)
+
         # Primary provider (for trade decisions)
         self.provider: LLMProvider = create_provider(CONFIG)
 
@@ -381,6 +386,8 @@ class TradingAgent:
         tools = self._build_tools() if self.enable_tools else None
 
         messages: list[dict] = [{"role": "user", "content": context}]
+        
+        logger.info("Requesting trade decision for assets: %s (thinking=%s)", assets, self.thinking_enabled)
 
         # Anthropic has native thinking + tool-use with multi-turn content blocks.
         # OpenAI-compat providers need different message construction for tool results.
@@ -420,6 +427,7 @@ class TradingAgent:
 
             tool_use_blocks = [b for b in raw.content if b.type == "tool_use"]
             text_blocks = [b for b in raw.content if b.type == "text"]
+            thinking_blocks = [b for b in raw.content if b.type == "thinking"]
 
             if tool_use_blocks and raw.stop_reason == "tool_use":
                 # Append full assistant message (including thinking blocks)
@@ -440,7 +448,12 @@ class TradingAgent:
                 continue
 
             raw_text = "".join(b.text for b in text_blocks)
-            return self._parse_text_response(raw_text, assets)
+            thinking_text = "".join(b.thinking for b in thinking_blocks)
+            
+            parsed = self._parse_text_response(raw_text, assets)
+            if isinstance(parsed, dict):
+                parsed["thinking"] = thinking_text
+            return parsed
 
         return self._empty_response(assets, "tool loop cap")
 
@@ -460,6 +473,8 @@ class TradingAgent:
                     messages=messages,
                     tools=tools,
                     max_tokens=self.max_tokens,
+                    thinking_enabled=self.thinking_enabled,
+                    thinking_budget=self.thinking_budget,
                 )
             except Exception as e:
                 logger.error("LLM API error (%s): %s", type(self.provider).__name__, e)
@@ -477,7 +492,10 @@ class TradingAgent:
                 messages.extend(continuation)
                 continue
 
-            return self._parse_text_response(resp.text, assets)
+            parsed = self._parse_text_response(resp.text, assets)
+            if isinstance(parsed, dict):
+                parsed["thinking"] = resp.thinking
+            return parsed
 
         return self._empty_response(assets, "tool loop cap")
 

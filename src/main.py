@@ -420,6 +420,7 @@ def main():
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "cycle": invocation_count,
                 "reasoning": reasoning_text[:2000] if reasoning_text else "",
+                "thinking": outputs.get("thinking", ""),
                 "decisions": cycle_decisions,
                 "account_value": round_or_none(account_value, 2),
                 "balance": round_or_none(state['balance'], 2),

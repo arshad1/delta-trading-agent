@@ -241,6 +241,22 @@ export default function Dashboard({ onAgentStatusChange }) {
                       {d.reasoning.slice(0, 300)}{d.reasoning.length > 300 ? '…' : ''}
                     </p>
                   )}
+                  {d.thinking && (
+                    <div style={{
+                      marginTop: 10,
+                      padding: '8px 12px',
+                      background: 'rgba(0,0,0,0.2)',
+                      borderLeft: '2px solid var(--primary)',
+                      fontSize: 11,
+                      color: 'var(--text-muted)',
+                      fontFamily: 'var(--font-mono)',
+                      maxHeight: 120,
+                      overflowY: 'auto'
+                    }}>
+                      <div style={{ textTransform: 'uppercase', fontSize: 9, fontWeight: 700, marginBottom: 4, opacity: 0.5 }}>Internal Thinking</div>
+                      {d.thinking}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
