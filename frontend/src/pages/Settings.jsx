@@ -11,7 +11,7 @@ const MAINNET_URL = 'https://api.india.delta.exchange'
 const LLM_PROVIDERS = [
   { value: 'anthropic', label: 'Anthropic Claude', models: ['claude-opus-4-5-20251101', 'claude-sonnet-4-20250514', 'claude-haiku-4-5-20251001'] },
   { value: 'openai', label: 'OpenAI', models: ['gpt-4o', 'gpt-4o-mini', 'o1', 'o3-mini'] },
-  { value: 'deepseek', label: 'DeepSeek', models: ['deepseek-chat', 'deepseek-reasoner', 'deepseek-v4-pro'] },
+  { value: 'deepseek', label: 'DeepSeek', models: ['deepseek-chat', 'deepseek-reasoner', 'deepseek-v4-pro', 'deepseek-v4-flash'] },
   { value: 'openrouter', label: 'OpenRouter', models: ['meta-llama/llama-3.3-70b-instruct', 'anthropic/claude-opus-4-5', 'google/gemini-2.0-flash'] },
   { value: 'openai_compat', label: 'OpenAI Compatible (Ollama, LM Studio…)', models: [] },
 ]

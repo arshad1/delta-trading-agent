@@ -151,7 +151,6 @@ class AnthropicProvider(LLMProvider):
             ]
 
         if thinking_enabled:
-            # Bump max_tokens first so the model has room to output after thinking
             effective_max_tokens = max(max_tokens, 16000)
             kwargs["max_tokens"] = effective_max_tokens
             kwargs["thinking"] = {
@@ -159,80 +158,48 @@ class AnthropicProvider(LLMProvider):
                 "budget_tokens": min(thinking_budget, effective_max_tokens - 1000),
             }
 
-        if thinking_enabled:
-            logger.info("Starting streaming response for Anthropic thinking model...")
-            full_text = ""
-            full_thinking = ""
-            stop_reason = "end_turn"
-            usage = None
-            _last_logged_thinking = 0  # throttle progress logs
-
-            with self._client.messages.stream(**kwargs) as stream:
-                for event in stream:
-                    if event.type == "content_block_start":
-                        if event.content_block.type == "thinking":
-                            logger.info("[anthropic] Thinking started...")
-                    elif event.type == "content_block_delta":
-                        if event.delta.type == "thinking_delta":
-                            full_thinking += event.delta.thinking
-                            if len(full_thinking) - _last_logged_thinking >= 500:
-                                logger.info("[anthropic] Thinking... %d chars", len(full_thinking))
-                                _last_logged_thinking = len(full_thinking)
-                        elif event.delta.type == "text_delta":
-                            if not full_text and full_thinking:
-                                logger.info("[anthropic] Thinking complete (%d chars), receiving response...", len(full_thinking))
-                            full_text += event.delta.text
-                    elif event.type == "message_stop":
-                        # Final usage is available on the stream object
-                        msg = stream.get_final_message()
-                        usage = msg.usage
-                        stop_reason = msg.stop_reason or "end_turn"
-            
-            print() # Final newline
-            
-            result = LLMResponse(
-                text=full_text,
-                thinking=full_thinking,
-                tool_calls=[], # Tool calls in streaming are more complex
-                stop_reason=stop_reason,
-                input_tokens=usage.input_tokens if usage else 0,
-                output_tokens=usage.output_tokens if usage else 0,
-            )
-            self.log_response(result)
-            return result
-
-        # Non-streaming fallback
-        resp = self._client.messages.create(**kwargs)
-        logger.info(
-            "Anthropic response: stop_reason=%s, usage=%s",
-            resp.stop_reason,
-            resp.usage,
-        )
-
-        # Extract text, thinking, and tool-use blocks
-        text_parts: list[str] = []
-        thinking_parts: list[str] = []
+        logger.info("[anthropic] Streaming response (thinking=%s)...", thinking_enabled)
+        full_text = ""
+        full_thinking = ""
         tool_calls: list[dict] = []
+        stop_reason = "end_turn"
+        usage = None
+        _last_logged_thinking = 0
 
-        for block in resp.content:
-            if block.type == "text":
-                text_parts.append(block.text)
-            elif block.type == "thinking":
-                thinking_parts.append(block.thinking)
-            elif block.type == "tool_use":
-                tool_calls.append({
-                    "id": block.id,
-                    "name": block.name,
-                    "arguments": block.input,  # already a dict
-                })
+        with self._client.messages.stream(**kwargs) as stream:
+            for event in stream:
+                if event.type == "content_block_start":
+                    if event.content_block.type == "thinking":
+                        logger.info("[anthropic] Thinking started...")
+                elif event.type == "content_block_delta":
+                    if event.delta.type == "thinking_delta":
+                        full_thinking += event.delta.thinking
+                        if len(full_thinking) - _last_logged_thinking >= 500:
+                            logger.info("[anthropic] Thinking... %d chars", len(full_thinking))
+                            _last_logged_thinking = len(full_thinking)
+                    elif event.delta.type == "text_delta":
+                        if not full_text and full_thinking:
+                            logger.info("[anthropic] Thinking complete (%d chars), receiving response...", len(full_thinking))
+                        full_text += event.delta.text
+
+            msg = stream.get_final_message()
+            usage = msg.usage
+            stop_reason = msg.stop_reason or "end_turn"
+            for block in msg.content:
+                if block.type == "tool_use":
+                    tool_calls.append({
+                        "id": block.id,
+                        "name": block.name,
+                        "arguments": block.input,
+                    })
 
         result = LLMResponse(
-            text="\n".join(text_parts),
-            thinking="\n".join(thinking_parts) if thinking_parts else None,
+            text=full_text,
+            thinking=full_thinking if full_thinking else None,
             tool_calls=tool_calls,
-            stop_reason=resp.stop_reason or "end_turn",
-            input_tokens=resp.usage.input_tokens,
-            output_tokens=resp.usage.output_tokens,
+            stop_reason=stop_reason,
+            input_tokens=usage.input_tokens if usage else 0,
+            output_tokens=usage.output_tokens if usage else 0,
         )
         self.log_response(result)
         return result
@@ -259,7 +226,7 @@ class AnthropicProvider(LLMProvider):
 
     def chat_raw(self, system: str, messages: list[dict], tools: list[ToolDefinition] | None = None,
                  *, max_tokens: int = 4096, thinking_enabled: bool = False, thinking_budget: int = 10000):
-        """Return the raw Anthropic response object (for tool-use loop)."""
+        """Stream and return the final Anthropic response object (for tool-use loop)."""
         import anthropic as _anthropic
 
         self.log_request(self._model, messages)
@@ -278,7 +245,28 @@ class AnthropicProvider(LLMProvider):
             effective_max_tokens = max(max_tokens, 16000)
             kwargs["max_tokens"] = effective_max_tokens
             kwargs["thinking"] = {"type": "enabled", "budget_tokens": min(thinking_budget, effective_max_tokens - 1000)}
-        return self._client.messages.create(**kwargs)
+
+        logger.info("[anthropic] Streaming raw response (thinking=%s)...", thinking_enabled)
+        full_thinking = ""
+        full_text = ""
+        _last_logged_thinking = 0
+
+        with self._client.messages.stream(**kwargs) as stream:
+            for event in stream:
+                if event.type == "content_block_start":
+                    if event.content_block.type == "thinking":
+                        logger.info("[anthropic] Thinking started...")
+                elif event.type == "content_block_delta":
+                    if event.delta.type == "thinking_delta":
+                        full_thinking += event.delta.thinking
+                        if len(full_thinking) - _last_logged_thinking >= 500:
+                            logger.info("[anthropic] Thinking... %d chars", len(full_thinking))
+                            _last_logged_thinking = len(full_thinking)
+                    elif event.delta.type == "text_delta":
+                        if not full_text and full_thinking:
+                            logger.info("[anthropic] Thinking complete (%d chars), receiving response...", len(full_thinking))
+                        full_text += event.delta.text
+            return stream.get_final_message()
 
 
 # ---------------------------------------------------------------------------
@@ -329,11 +317,21 @@ class OpenAICompatProvider(LLMProvider):
 
         self.log_request(self._model, messages)
 
-        # Build openai-format message list
         oai_messages = [{"role": "system", "content": system}] + messages
-
-        # Always bump max_tokens first so reasoning models have room to respond
         effective_max_tokens = max(max_tokens, 16000) if thinking_enabled else max_tokens
+
+        # Some DeepSeek models (v4-pro, reasoner, R1) always generate thinking tokens
+        # even without explicit thinking_enabled. Bump max_tokens so the actual response
+        # is not truncated by the hidden thinking budget.
+        _DEEPSEEK_REASONERS = ("reasoner", "r1", "v4-pro", "v3-0324")
+        if (self._provider == "deepseek"
+                and not thinking_enabled
+                and any(h in self._model.lower() for h in _DEEPSEEK_REASONERS)):
+            effective_max_tokens = max(effective_max_tokens, 16000)
+            logger.info(
+                "[deepseek] Reasoning model '%s' thinks by default — bumping max_tokens to %d",
+                self._model, effective_max_tokens,
+            )
 
         kwargs: dict[str, Any] = {
             "model": self._model,
@@ -343,11 +341,9 @@ class OpenAICompatProvider(LLMProvider):
 
         if thinking_enabled:
             if self._provider in ("deepseek", "openrouter", "openai_compat"):
-                # DeepSeek V4 Pro / Reasoner / OpenRouter style
                 kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
                 kwargs["reasoning_effort"] = "high"
             elif self._provider == "openai" and (self._model.startswith("o1") or self._model.startswith("o3")):
-                # OpenAI o1/o3 reasoning models
                 kwargs["reasoning_effort"] = "high"
 
         if tools:
@@ -364,120 +360,94 @@ class OpenAICompatProvider(LLMProvider):
             ]
             kwargs["tool_choice"] = "auto"
 
-        # Use streaming for reasoning/thinking models to show live progress
-        if thinking_enabled:
-            logger.info(
-                "[%s] Streaming reasoning response (max_tokens=%d)...",
-                self._provider, effective_max_tokens,
-            )
-            resp_stream = self._client.chat.completions.create(**kwargs, stream=True)
-
-            full_text = ""
-            full_thinking = ""
-            finish_reason = "stop"
-            prompt_tokens = 0
-            completion_tokens = 0
-            _last_logged_thinking = 0  # throttle progress logs
-
-            for chunk in resp_stream:
-                # Usage-only final chunk (some providers send this)
-                if not chunk.choices:
-                    if hasattr(chunk, "usage") and chunk.usage:
-                        prompt_tokens = chunk.usage.prompt_tokens or 0
-                        completion_tokens = chunk.usage.completion_tokens or 0
-                    continue
-
-                delta = chunk.choices[0].delta
-
-                # Capture reasoning/thinking tokens (DeepSeek Reasoner / V4 Pro)
-                rc = getattr(delta, "reasoning_content", None)
-                if rc:
-                    full_thinking += rc
-                    # Log a snippet every 500 chars so you can read what the model is thinking
-                    if len(full_thinking) - _last_logged_thinking >= 500:
-                        snippet = full_thinking[-200:].replace("\n", " ").strip()
-                        logger.info("[%s] Thinking (%d chars): ...%s", self._provider, len(full_thinking), snippet)
-                        _last_logged_thinking = len(full_thinking)
-
-                # Capture actual response content
-                if delta.content:
-                    if not full_text:
-                        logger.info("[%s] Thinking complete (%d chars), receiving response...", self._provider, len(full_thinking))
-                    full_text += delta.content
-
-                if chunk.choices[0].finish_reason:
-                    finish_reason = chunk.choices[0].finish_reason
-
-            if not full_text:
-                logger.error(
-                    "[%s] Empty response! finish_reason=%s thinking_len=%d max_tokens=%d\nThinking content:\n%s",
-                    self._provider, finish_reason, len(full_thinking), effective_max_tokens,
-                    full_thinking[-1000:] if full_thinking else "(none)",
-                )
-            else:
-                logger.info(
-                    "[%s] Response received (finish_reason=%s, thinking=%d chars, response=%d chars):\n%s",
-                    self._provider, finish_reason, len(full_thinking), len(full_text),
-                    full_text[:2000] + ("…" if len(full_text) > 2000 else ""),
-                )
-
-            stop_reason = "end_turn"
-            if finish_reason == "tool_calls":
-                stop_reason = "tool_use"
-            elif finish_reason == "length":
-                stop_reason = "length"
-
-            result = LLMResponse(
-                text=full_text,
-                thinking=full_thinking,
-                tool_calls=[],  # Streaming tool-calls not supported for reasoning models
-                stop_reason=stop_reason,
-                input_tokens=prompt_tokens,
-                output_tokens=completion_tokens,
-            )
-            self.log_response(result)
-            return result
-
-        # Non-streaming fallback for non-thinking models or when thinking is disabled
-        resp = self._client.chat.completions.create(**kwargs)
         logger.info(
-            "%s response: finish_reason=%s, usage=%s",
-            self._provider,
-            resp.choices[0].finish_reason,
-            resp.usage,
+            "[%s] Streaming response (thinking=%s, max_tokens=%d)...",
+            self._provider, thinking_enabled, effective_max_tokens,
         )
 
-        choice = resp.choices[0]
-        msg = choice.message
-        text = msg.content or ""
-        thinking = getattr(msg, "reasoning_content", None)
-        tool_calls: list[dict] = []
+        resp_stream = self._client.chat.completions.create(**kwargs, stream=True)
 
-        if msg.tool_calls:
-            for tc in msg.tool_calls:
-                try:
-                    args = json.loads(tc.function.arguments)
-                except (json.JSONDecodeError, TypeError):
-                    args = {}
-                tool_calls.append({
-                    "id": tc.id,
-                    "name": tc.function.name,
-                    "arguments": args,
-                })
+        full_text = ""
+        full_thinking = ""
+        finish_reason = "stop"
+        prompt_tokens = 0
+        completion_tokens = 0
+        _tool_calls_raw: dict[int, dict] = {}
+        _last_logged_thinking = 0
+
+        for chunk in resp_stream:
+            if not chunk.choices:
+                if hasattr(chunk, "usage") and chunk.usage:
+                    prompt_tokens = chunk.usage.prompt_tokens or 0
+                    completion_tokens = chunk.usage.completion_tokens or 0
+                continue
+
+            delta = chunk.choices[0].delta
+
+            rc = getattr(delta, "reasoning_content", None)
+            if rc:
+                full_thinking += rc
+                if len(full_thinking) - _last_logged_thinking >= 500:
+                    snippet = full_thinking[-200:].replace("\n", " ").strip()
+                    logger.info("[%s] Thinking (%d chars): ...%s", self._provider, len(full_thinking), snippet)
+                    _last_logged_thinking = len(full_thinking)
+
+            if delta.content:
+                if not full_text and full_thinking:
+                    logger.info("[%s] Thinking complete (%d chars), receiving response...", self._provider, len(full_thinking))
+                full_text += delta.content
+
+            if delta.tool_calls:
+                for tc_delta in delta.tool_calls:
+                    idx = tc_delta.index
+                    if idx not in _tool_calls_raw:
+                        _tool_calls_raw[idx] = {"id": "", "name": "", "arguments_str": ""}
+                    if tc_delta.id:
+                        _tool_calls_raw[idx]["id"] = tc_delta.id
+                    if tc_delta.function:
+                        if tc_delta.function.name:
+                            _tool_calls_raw[idx]["name"] += tc_delta.function.name
+                        if tc_delta.function.arguments:
+                            _tool_calls_raw[idx]["arguments_str"] += tc_delta.function.arguments
+
+            if chunk.choices[0].finish_reason:
+                finish_reason = chunk.choices[0].finish_reason
+
+        tool_calls: list[dict] = []
+        for idx in sorted(_tool_calls_raw.keys()):
+            tc = _tool_calls_raw[idx]
+            try:
+                args = json.loads(tc["arguments_str"])
+            except (json.JSONDecodeError, TypeError):
+                args = {}
+            tool_calls.append({"id": tc["id"], "name": tc["name"], "arguments": args})
+
+        if not full_text and not tool_calls:
+            logger.error(
+                "[%s] Empty response! finish_reason=%s thinking_len=%d max_tokens=%d\nThinking content:\n%s",
+                self._provider, finish_reason, len(full_thinking), effective_max_tokens,
+                full_thinking[-1000:] if full_thinking else "(none)",
+            )
+        else:
+            logger.info(
+                "[%s] Response received (finish_reason=%s, thinking=%d chars, response=%d chars):\n%s",
+                self._provider, finish_reason, len(full_thinking), len(full_text),
+                full_text[:2000] + ("…" if len(full_text) > 2000 else ""),
+            )
 
         stop_reason = "end_turn"
-        if choice.finish_reason == "tool_calls":
+        if finish_reason == "tool_calls":
             stop_reason = "tool_use"
-        elif choice.finish_reason == "length":
+        elif finish_reason == "length":
             stop_reason = "length"
 
         result = LLMResponse(
-            text=text,
-            thinking=thinking,
+            text=full_text,
+            thinking=full_thinking if full_thinking else None,
             tool_calls=tool_calls,
             stop_reason=stop_reason,
-            input_tokens=resp.usage.prompt_tokens if resp.usage else 0,
-            output_tokens=resp.usage.completion_tokens if resp.usage else 0,
+            input_tokens=prompt_tokens,
+            output_tokens=completion_tokens,
         )
         self.log_response(result)
         return result

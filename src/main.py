@@ -197,6 +197,29 @@ def main():
                     except Exception:
                         continue
                 assets_with_orders = {o.get('coin') for o in (open_orders or []) if o.get('coin')}
+
+                # Apply deferred bracket TP/SL for limit orders that have now filled
+                for tr in active_trades:
+                    if not (tr.get('pending_tp_price') or tr.get('pending_sl_price')):
+                        continue
+                    tr_asset = tr.get('asset')
+                    if tr_asset in assets_with_positions:
+                        try:
+                            bracket = await exchange.place_bracket_order(
+                                tr_asset,
+                                tr.get('is_long', True),
+                                tp_price=tr.get('pending_tp_price'),
+                                sl_price=tr.get('pending_sl_price'),
+                            )
+                            oids = exchange.extract_oids(bracket)
+                            tr['tp_oid'] = oids[0] if oids else None
+                            tr['pending_tp_price'] = None
+                            tr['pending_sl_price'] = None
+                            add_event(f"Limit order for {tr_asset} filled — bracket TP/SL applied")
+                        except Exception as be:
+                            logger.error("Deferred bracket error for %s: %s", tr_asset, be)
+                            add_event(f"Deferred bracket error for {tr_asset}: {be}")
+
                 for tr in active_trades[:]:
                     asset = tr.get('asset')
                     if asset not in assets_with_positions and asset not in assets_with_orders:
@@ -509,18 +532,30 @@ def main():
                         trade_log.append({"type": action, "price": current_price, "amount": amount, "exit_plan": output["exit_plan"], "filled": filled})
                         tp_oid = None
                         sl_oid = None
-                        # Delta uses a single bracket-order endpoint for both TP and SL
-                        if output.get("tp_price") or output.get("sl_price"):
-                            bracket = await exchange.place_bracket_order(
-                                asset,
-                                is_buy,
-                                tp_price=float(output["tp_price"]) if output.get("tp_price") else None,
-                                sl_price=float(output["sl_price"]) if output.get("sl_price") else None,
-                            )
-                            oids = exchange.extract_oids(bracket)
-                            tp_oid = oids[0] if oids else None
-                            if output.get("tp_price"):
-                                add_event(f"TP+SL bracket placed for {asset}: tp={output.get('tp_price')} sl={output.get('sl_price')}")
+                        pending_tp_price = None
+                        pending_sl_price = None
+                        # Bracket order requires an open position — limit orders are resting
+                        # until filled, so defer TP/SL until the position actually opens.
+                        if order_type == "limit":
+                            pending_tp_price = float(output["tp_price"]) if output.get("tp_price") else None
+                            pending_sl_price = float(output["sl_price"]) if output.get("sl_price") else None
+                            if pending_tp_price or pending_sl_price:
+                                add_event(f"Limit order placed for {asset} — bracket (tp={pending_tp_price} sl={pending_sl_price}) deferred until fill")
+                        elif output.get("tp_price") or output.get("sl_price"):
+                            try:
+                                bracket = await exchange.place_bracket_order(
+                                    asset,
+                                    is_buy,
+                                    tp_price=float(output["tp_price"]) if output.get("tp_price") else None,
+                                    sl_price=float(output["sl_price"]) if output.get("sl_price") else None,
+                                )
+                                oids = exchange.extract_oids(bracket)
+                                tp_oid = oids[0] if oids else None
+                                if output.get("tp_price"):
+                                    add_event(f"TP+SL bracket placed for {asset}: tp={output.get('tp_price')} sl={output.get('sl_price')}")
+                            except Exception as be:
+                                logger.error("Bracket order error for %s: %s", asset, be)
+                                add_event(f"Bracket order error for {asset}: {be}")
                         amount = alloc_usd / current_price  # keep for logging/diary
                         # Reconcile: if opposite-side position exists or TP/SL just filled, clear stale active_trades for this asset
                         for existing in active_trades[:]:
@@ -536,6 +571,8 @@ def main():
                             "entry_price": current_price,
                             "tp_oid": tp_oid,
                             "sl_oid": sl_oid,
+                            "pending_tp_price": pending_tp_price,
+                            "pending_sl_price": pending_sl_price,
                             "exit_plan": output["exit_plan"],
                             "opened_at": datetime.now().isoformat()
                         })

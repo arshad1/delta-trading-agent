@@ -738,13 +738,29 @@ class DeltaExchangeAPI:
         """Compatibility wrapper — places bracket order with SL only."""
         return await self.place_bracket_order(asset, is_long, sl_price=sl_price)
 
-    async def cancel_all_orders(self, asset: str) -> dict:
-        """Cancel all open orders for *asset*."""
+    async def cancel_order(self, asset: str, order_id: str | int) -> dict:
+        """Cancel a single open order by ID."""
         meta = self._product(asset)
-        body = {"product_id": meta["id"]}
-        return await self._request(
-            "DELETE", "/v2/orders/all", body=body
-        )
+        body = {"id": int(order_id), "product_id": meta["id"]}
+        return await self._request("DELETE", "/v2/orders", body=body)
+
+    async def cancel_all_orders(self, asset: str) -> dict:
+        """Cancel all open orders for *asset* by cancelling each one individually.
+
+        Delta's bulk-cancel endpoint (DELETE /v2/orders/all) returns success
+        but does not reliably cancel resting orders, so we fetch open orders
+        and cancel them one by one.
+        """
+        open_orders = await self.get_open_orders()
+        asset_orders = [o for o in open_orders if o.get("coin") == asset]
+        results = []
+        for o in asset_orders:
+            try:
+                result = await self.cancel_order(asset, o["oid"])
+                results.append(result)
+            except Exception as e:
+                logger.warning("Failed to cancel order %s for %s: %s", o["oid"], asset, e)
+        return {"cancelled": len(results)}
 
     def extract_oids(self, result: Any) -> list[str]:
         """Extract order IDs from a place_order or bracket_order response.

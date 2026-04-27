@@ -110,14 +110,20 @@ class TradingAgent:
         
         for _ in range(3):
             try:
-                resp = self.provider.chat(
+                # Use the sanitize provider (cheap, non-reasoning) — the main reasoning
+                # model (e.g. deepseek-v4-pro) burns its token budget on thinking and
+                # returns an empty body when max_tokens is too low.
+                resp = self._sanitize_provider.chat(
                     system=system_prompt,
                     messages=messages,
-                    max_tokens=1000,
+                    max_tokens=2048,
                 )
-                
+
                 raw_text = resp.text.strip()
-                
+                if not raw_text:
+                    logger.error("Reviewer returned empty response (finish_reason=%s)", resp.stop_reason)
+                    continue
+
                 # Robust JSON extraction
                 import re
                 match = re.search(r'```(?:json)?\s*(.*?)\s*```', raw_text, re.DOTALL | re.IGNORECASE)

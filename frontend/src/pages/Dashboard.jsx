@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { api } from '../api/client'
 
 function StatCard({ icon, label, value, valueClass, bg }) {
@@ -35,6 +35,14 @@ export default function Dashboard({ onAgentStatusChange }) {
   const [actionLoading, setActionLoading] = useState(false)
   const [error, setError] = useState('')
   const [activeTab, setActiveTab] = useState('decisions')
+  const logViewerRef = useRef(null)
+
+  // Auto-scroll log viewer to bottom when new logs arrive
+  useEffect(() => {
+    if (logViewerRef.current) {
+      logViewerRef.current.scrollTop = logViewerRef.current.scrollHeight
+    }
+  }, [logs])
 
   const fetchAll = useCallback(async () => {
     try {
@@ -335,7 +343,7 @@ export default function Dashboard({ onAgentStatusChange }) {
               </button>
             </div>
           </div>
-          <div className="log-viewer">{logs || 'No logs yet. Start the agent to see output here.'}</div>
+          <div className="log-viewer" ref={logViewerRef}>{logs || 'No logs yet. Start the agent to see output here.'}</div>
         </div>
       )}
     </div>
