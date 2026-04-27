@@ -9,11 +9,11 @@ const TESTNET_URL = 'https://cdn-ind.testnet.deltaex.org'
 const MAINNET_URL = 'https://api.india.delta.exchange'
 
 const LLM_PROVIDERS = [
-  { value: 'anthropic',    label: 'Anthropic Claude', models: ['claude-opus-4-5-20251101','claude-sonnet-4-20250514','claude-haiku-4-5-20251001'] },
-  { value: 'openai',       label: 'OpenAI',          models: ['gpt-4o','gpt-4o-mini','o1','o3-mini'] },
-  { value: 'deepseek',     label: 'DeepSeek',        models: ['deepseek-chat','deepseek-reasoner'] },
-  { value: 'openrouter',   label: 'OpenRouter',      models: ['meta-llama/llama-3.3-70b-instruct','anthropic/claude-opus-4-5','google/gemini-2.0-flash'] },
-  { value: 'openai_compat',label: 'OpenAI Compatible (Ollama, LM Studio…)', models: [] },
+  { value: 'anthropic', label: 'Anthropic Claude', models: ['claude-opus-4-5-20251101', 'claude-sonnet-4-20250514', 'claude-haiku-4-5-20251001'] },
+  { value: 'openai', label: 'OpenAI', models: ['gpt-4o', 'gpt-4o-mini', 'o1', 'o3-mini'] },
+  { value: 'deepseek', label: 'DeepSeek', models: ['deepseek-chat', 'deepseek-reasoner', 'deepseek-v4-pro'] },
+  { value: 'openrouter', label: 'OpenRouter', models: ['meta-llama/llama-3.3-70b-instruct', 'anthropic/claude-opus-4-5', 'google/gemini-2.0-flash'] },
+  { value: 'openai_compat', label: 'OpenAI Compatible (Ollama, LM Studio…)', models: [] },
 ]
 
 function ToggleInput({ id, value, onChange }) {
@@ -33,7 +33,7 @@ function ToggleInput({ id, value, onChange }) {
 }
 
 function SettingField({ setting, value, onChange }) {
-  const isBool  = setting.key.startsWith('ENABLE_') || setting.key.startsWith('THINKING_ENABLED')
+  const isBool = setting.key.startsWith('ENABLE_') || setting.key.startsWith('THINKING_ENABLED')
   const isSecret = setting.is_secret
 
   if (isBool) return (
@@ -57,13 +57,13 @@ function SettingField({ setting, value, onChange }) {
 }
 
 export default function Settings() {
-  const [tab, setTab]           = useState('exchange')
+  const [tab, setTab] = useState('exchange')
   const [settings, setSettings] = useState([])
-  const [values, setValues]     = useState({})
-  const [loading, setLoading]   = useState(true)
-  const [saving, setSaving]     = useState(false)
-  const [success, setSuccess]   = useState('')
-  const [error, setError]       = useState('')
+  const [values, setValues] = useState({})
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [success, setSuccess] = useState('')
+  const [error, setError] = useState('')
   const [currentEnv, setCurrentEnv] = useState('testnet')
   const [envSwitching, setEnvSwitching] = useState(false)
 
@@ -73,7 +73,7 @@ export default function Settings() {
       const allData = await api.getSettings()
       // Filter out DB credentials from the UI
       const data = allData.filter(s => !s.key.startsWith('DB_'))
-      
+
       setSettings(data)
       const map = {}
       data.forEach(s => { map[s.key] = s.value ?? '' })
@@ -89,7 +89,7 @@ export default function Settings() {
     try {
       const e = await api.getCurrentEnv()
       setCurrentEnv(e.environment)
-    } catch {}
+    } catch { }
   }, [])
 
   useEffect(() => {
@@ -156,7 +156,7 @@ export default function Settings() {
         </button>
       </div>
 
-      {error   && <div className="alert alert-error">⚠️ {error}</div>}
+      {error && <div className="alert alert-error">⚠️ {error}</div>}
       {success && <div className="alert alert-success">✅ {success}</div>}
 
       {/* Environment quick-switch */}

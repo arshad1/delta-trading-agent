@@ -112,6 +112,21 @@ OPENAI_COMPAT_API_KEY=none
 
 ### Run
 
+The project now features a full-featured web dashboard and API. Start it using `uvicorn`:
+
+```bash
+uvicorn src.api.app:app --host 0.0.0.0 --port 8000 --reload
+```
+
+Once running, you can:
+1. Open the dashboard at `http://localhost:8000`
+2. Log in with your credentials (default: `admin` / `password123`)
+3. Configure and start the trading agent directly from the UI
+
+#### Headless Mode (Direct CLI)
+
+If you prefer to run the trading agent directly without the dashboard:
+
 ```bash
 python src/main.py
 ```
@@ -157,12 +172,14 @@ Each loop iteration:
 
 ## API Endpoints
 
-When running, a lightweight local HTTP server is available:
+The FastAPI server provides several endpoints for monitoring and control:
 
-- `GET /diary` — Recent trade diary entries as JSON
-- `GET /logs` — LLM request logs
+- `GET /api/agent/status` — Current agent status (running, uptime, PID)
+- `GET /api/agent/diary` — Recent trade diary entries
+- `GET /api/agent/logs` — Real-time agent logs
+- `GET /api/agent/decisions` — Recent LLM decisions and rationales
 
-Default: `http://localhost:3000` (configurable via `API_HOST` / `API_PORT`).
+Default: `http://localhost:8000` (configurable via `uvicorn` flags).
 
 ## Advanced Options
 
