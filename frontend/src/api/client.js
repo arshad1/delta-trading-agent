@@ -66,4 +66,9 @@ export const api = {
   clearDiary: () => request('POST', '/agent/diary/clear'),
   getLogs: (lines = 200) => request('GET', `/agent/logs?lines=${lines}`),
   clearLogs: () => request('POST', '/agent/logs/clear'),
+
+  // Kill switch
+  activateKillSwitch: (closePositions = true) =>
+    request('POST', `/agent/kill-switch?close_positions=${closePositions}`),
+  resetKillSwitch: () => request('POST', '/agent/kill-switch/reset'),
 }

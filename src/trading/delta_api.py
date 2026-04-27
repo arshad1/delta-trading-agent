@@ -54,16 +54,26 @@ RETRY_BASE_SECS = 1.0
 class DeltaExchangeAPI:
     """Async REST client for Delta Exchange (India) perpetual futures."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        api_secret: str | None = None,
+        leverage: int | None = None,
+    ) -> None:
         self._base_url: str = (
-            CONFIG.get("delta_base_url") or TESTNET_URL
+            base_url or CONFIG.get("delta_base_url") or TESTNET_URL
         ).rstrip("/")
 
-        # Auto-select credentials for the active environment
+        # Auto-select credentials — explicit overrides take priority over CONFIG
         _is_testnet = "testnet" in self._base_url
-        if _is_testnet:
-            self._api_key: str = CONFIG.get("delta_testnet_api_key") or ""
-            self._api_secret: str = CONFIG.get("delta_testnet_api_secret") or ""
+        if api_key is not None:
+            self._api_key: str = api_key
+            self._api_secret: str = api_secret or ""
+        elif _is_testnet:
+            self._api_key = CONFIG.get("delta_testnet_api_key") or ""
+            self._api_secret = CONFIG.get("delta_testnet_api_secret") or ""
         else:
             self._api_key = CONFIG.get("delta_prod_api_key") or ""
             self._api_secret = CONFIG.get("delta_prod_api_secret") or ""
@@ -75,7 +85,7 @@ class DeltaExchangeAPI:
             self._base_url,
         )
 
-        self._leverage: int = int(CONFIG.get("delta_leverage") or 5)
+        self._leverage: int = leverage if leverage is not None else int(CONFIG.get("delta_leverage") or 5)
         # {symbol_uppercase -> {id, contract_value, tick_size, symbol}}
         self._product_cache: dict[str, dict] = {}
         self._session: aiohttp.ClientSession | None = None

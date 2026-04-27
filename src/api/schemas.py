@@ -78,3 +78,4 @@ class AgentStatusOut(BaseModel):
     environment: str
     llm_provider: str
     llm_model: str
+    kill_switch_active: bool = False

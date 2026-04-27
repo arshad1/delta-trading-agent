@@ -122,6 +122,43 @@ export default function Dashboard({ onAgentStatusChange }) {
     }
   }
 
+  const handleKillSwitch = async () => {
+    const confirmed = window.confirm(
+      'EMERGENCY HALT\n\nThis will:\n  • Stop the agent immediately\n  • Cancel all open orders\n  • Close all open positions at market price\n\nThis cannot be undone automatically. Continue?'
+    )
+    if (!confirmed) return
+    setActionLoading(true)
+    setError('')
+    try {
+      const result = await api.activateKillSwitch(true)
+      await fetchAll()
+      const summary = [
+        result.agent_stopped ? 'Agent stopped.' : 'Agent was not running.',
+        result.cancelled_orders_for?.length ? `Orders cancelled for: ${result.cancelled_orders_for.join(', ')}.` : 'No open orders.',
+        result.closed_positions_for?.length ? `Positions closed for: ${result.closed_positions_for.join(', ')}.` : 'No open positions.',
+        result.errors?.length ? `Errors: ${result.errors.join('; ')}` : '',
+      ].filter(Boolean).join('\n')
+      alert('Kill switch activated.\n\n' + summary)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const handleResetKillSwitch = async () => {
+    setActionLoading(true)
+    setError('')
+    try {
+      await api.resetKillSwitch()
+      await fetchAll()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
   if (loading) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 400 }}>
       <div className="spinner" style={{ width: 32, height: 32 }} />
@@ -141,20 +178,60 @@ export default function Dashboard({ onAgentStatusChange }) {
           <h1 className="section-title">Dashboard</h1>
           <p className="section-subtitle">Live trading agent overview — refreshes every 10s</p>
         </div>
-        <button
-          id="agent-toggle-btn"
-          className={`btn ${status?.running ? 'btn-danger' : 'btn-success'} btn-lg`}
-          onClick={handleStartStop}
-          disabled={actionLoading}
-        >
-          {actionLoading
-            ? <><span className="spinner" /> Working…</>
-            : status?.running ? '⏹ Stop Agent' : '▶ Start Agent'
-          }
-        </button>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          {status?.kill_switch_active && (
+            <button
+              className="btn btn-secondary btn-lg"
+              onClick={handleResetKillSwitch}
+              disabled={actionLoading}
+              title="Clear kill switch and allow agent to restart"
+            >
+              {actionLoading ? <><span className="spinner" /> Working…</> : '↺ Reset Kill Switch'}
+            </button>
+          )}
+          {!status?.kill_switch_active && (
+            <button
+              className="btn btn-lg"
+              style={{ background: '#7c1d1d', color: '#fca5a5', border: '1px solid #ef4444', fontWeight: 700, letterSpacing: '0.03em' }}
+              onClick={handleKillSwitch}
+              disabled={actionLoading}
+              title="Emergency halt: stop agent, cancel orders, close positions"
+            >
+              {actionLoading ? <><span className="spinner" /> Working…</> : '⚡ Kill Switch'}
+            </button>
+          )}
+          <button
+            id="agent-toggle-btn"
+            className={`btn ${status?.running ? 'btn-danger' : 'btn-success'} btn-lg`}
+            onClick={handleStartStop}
+            disabled={actionLoading || status?.kill_switch_active}
+            title={status?.kill_switch_active ? 'Reset kill switch before starting' : undefined}
+          >
+            {actionLoading
+              ? <><span className="spinner" /> Working…</>
+              : status?.running ? '⏹ Stop Agent' : '▶ Start Agent'
+            }
+          </button>
+        </div>
       </div>
 
       {error && <div className="alert alert-error">⚠️ {error}</div>}
+
+      {status?.kill_switch_active && (
+        <div style={{
+          background: '#450a0a', border: '1px solid #ef4444', borderRadius: 'var(--radius-sm)',
+          padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8,
+        }}>
+          <span style={{ fontSize: 18 }}>🛑</span>
+          <div style={{ flex: 1 }}>
+            <strong style={{ color: '#fca5a5' }}>Kill Switch Active</strong>
+            <span style={{ color: 'var(--text-muted)', fontSize: 13, marginLeft: 8 }}>
+              All trading is halted. All orders and positions have been cancelled/closed.
+              Click <strong>Reset Kill Switch</strong> to allow the agent to restart.
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Agent status bar */}
       <div className="agent-status-bar">

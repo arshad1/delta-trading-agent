@@ -30,6 +30,8 @@ load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
+KILL_SWITCH_PATH = pathlib.Path(__file__).parent.parent / ".kill_switch"
+
 
 def clear_terminal():
     """Clear the terminal screen, but only when running interactively."""
@@ -129,6 +131,12 @@ def main():
                     "unrealized_pnl": round_or_none(pos.get('pnl'), 4),
                     "leverage": pos.get('leverage')
                 })
+
+            # --- KILL SWITCH: abort cycle if flag file exists ---
+            if KILL_SWITCH_PATH.exists():
+                add_event("Kill switch is active — skipping trading cycle. Remove .kill_switch to resume.")
+                await asyncio.sleep(get_interval_seconds(args.interval))
+                continue
 
             # --- RISK: Force-close positions that exceed max loss ---
             try:

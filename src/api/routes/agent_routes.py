@@ -30,6 +30,7 @@ router = APIRouter(prefix="/api/agent", tags=["agent"])
 # persists across uvicorn reloads or multiple Gunicorn workers.
 ROOT_DIR = pathlib.Path(__file__).parent.parent.parent.parent
 STATE_PATH = ROOT_DIR / ".agent_state"
+KILL_SWITCH_PATH = ROOT_DIR / ".kill_switch"
 DIARY_PATH = ROOT_DIR / "diary.jsonl"
 DECISIONS_PATH = ROOT_DIR / "decisions.jsonl"
 
@@ -117,6 +118,7 @@ async def get_status(
         environment=env,
         llm_provider=settings.get("LLM_PROVIDER", "unknown"),
         llm_model=settings.get("LLM_MODEL", "unknown"),
+        kill_switch_active=KILL_SWITCH_PATH.exists(),
     )
 
 
@@ -266,3 +268,175 @@ async def clear_logs(_: User = Depends(get_current_user)):
         logger.exception("Failed to clear agent logs")
         raise HTTPException(status_code=500, detail=f"Failed to clear logs: {exc}") from exc
     return {"message": "Agent logs cleared"}
+
+
+async def _build_exchange(db: AsyncSession):
+    """Build a DeltaExchangeAPI instance using credentials stored in the DB."""
+    import sys
+    sys.path.insert(0, str(ROOT_DIR))
+    from src.trading.delta_api import DeltaExchangeAPI
+
+    result = await db.execute(select(Setting))
+    s = {row.key: row.value or "" for row in result.scalars().all()}
+
+    base_url = s.get("DELTA_BASE_URL", "")
+    is_testnet = "testnet" in base_url
+
+    if is_testnet:
+        api_key = s.get("DELTA_TESTNET_API_KEY") or s.get("DELTA_API_KEY", "")
+        api_secret = s.get("DELTA_TESTNET_API_SECRET") or s.get("DELTA_API_SECRET", "")
+    else:
+        api_key = s.get("DELTA_PROD_API_KEY") or s.get("DELTA_API_KEY", "")
+        api_secret = s.get("DELTA_PROD_API_SECRET") or s.get("DELTA_API_SECRET", "")
+
+    try:
+        leverage = int(s.get("DELTA_LEVERAGE", "5"))
+    except (ValueError, TypeError):
+        leverage = 5
+
+    return DeltaExchangeAPI(
+        base_url=base_url or None,
+        api_key=api_key or None,
+        api_secret=api_secret or None,
+        leverage=leverage,
+    ), s
+
+
+@router.post("/kill-switch")
+async def activate_kill_switch(
+    close_positions: bool = True,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Emergency halt: stop agent, cancel all open orders, optionally close all positions."""
+    # 1. Write the flag file so the agent loop won't trade if it's mid-cycle
+    KILL_SWITCH_PATH.write_text(json.dumps({
+        "activated_at": datetime.now(timezone.utc).isoformat(),
+        "close_positions": close_positions,
+    }))
+
+    # 2. Stop the agent process gracefully
+    agent_was_running = _is_agent_running()
+    if agent_was_running:
+        state = _get_agent_state()
+        if state and "pid" in state:
+            pid = state["pid"]
+            try:
+                import psutil
+                p = psutil.Process(pid)
+                p.terminate()
+                try:
+                    p.wait(timeout=8)
+                except psutil.TimeoutExpired:
+                    p.kill()
+            except ImportError:
+                try:
+                    import signal as _sig
+                    os.kill(pid, _sig.SIGTERM)
+                except OSError:
+                    pass
+            except Exception as exc:
+                logger.warning("Kill switch: could not stop agent cleanly: %s", exc)
+        try:
+            STATE_PATH.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    # 3. Connect to exchange and cancel orders / close positions
+    cancelled: list[str] = []
+    closed: list[str] = []
+    errors: list[str] = []
+
+    try:
+        exchange, settings = await _build_exchange(db)
+        assets_str = settings.get("ASSETS", "BTC ETH SOL")
+        assets = [a.strip() for a in (assets_str.split(",") if "," in assets_str else assets_str.split()) if a.strip()]
+
+        try:
+            await exchange.init_products(assets)
+
+            # Cancel all open orders
+            try:
+                open_orders = await exchange.get_open_orders()
+                seen_coins: set[str] = set()
+                for o in open_orders:
+                    coin = o.get("coin") or o.get("asset") or ""
+                    if coin and coin not in seen_coins:
+                        seen_coins.add(coin)
+                        try:
+                            await exchange.cancel_all_orders(coin)
+                            cancelled.append(coin)
+                        except Exception as exc:
+                            errors.append(f"cancel {coin}: {exc}")
+            except Exception as exc:
+                errors.append(f"fetch open orders: {exc}")
+
+            # Close all open positions with market orders
+            if close_positions:
+                try:
+                    state_data = await exchange.get_user_state()
+                    for pos in state_data.get("positions", []):
+                        coin = pos.get("coin")
+                        raw_size = pos.get("szi") or pos.get("size") or 0
+                        size = float(raw_size)
+                        if not coin or abs(size) < 1e-9:
+                            continue
+                        is_long = size > 0
+                        entry_px = float(pos.get("entryPx") or pos.get("entry_price") or 0)
+                        alloc_usd = abs(size) * entry_px if entry_px else abs(size)
+                        try:
+                            if is_long:
+                                await exchange.place_sell_order(coin, alloc_usd)
+                            else:
+                                await exchange.place_buy_order(coin, alloc_usd)
+                            closed.append(coin)
+                        except Exception as exc:
+                            errors.append(f"close {coin}: {exc}")
+                except Exception as exc:
+                    errors.append(f"fetch positions: {exc}")
+        finally:
+            await exchange.close()
+    except Exception as exc:
+        errors.append(f"exchange init: {exc}")
+
+    # 4. Write kill switch event to diary
+    diary_entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "action": "kill_switch_activated",
+        "agent_was_running": agent_was_running,
+        "cancelled_orders_for": cancelled,
+        "closed_positions_for": closed,
+        "errors": errors,
+    }
+    try:
+        with open(DIARY_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(diary_entry) + "\n")
+    except Exception:
+        pass
+
+    logger.warning(
+        "KILL SWITCH activated — agent_stopped=%s cancelled=%s closed=%s errors=%s",
+        agent_was_running, cancelled, closed, errors,
+    )
+
+    return {
+        "message": "Kill switch activated",
+        "agent_stopped": agent_was_running,
+        "cancelled_orders_for": cancelled,
+        "closed_positions_for": closed,
+        "errors": errors,
+    }
+
+
+@router.post("/kill-switch/reset")
+async def reset_kill_switch(_: User = Depends(get_current_user)):
+    """Clear the kill switch flag so the agent can be started again."""
+    if not KILL_SWITCH_PATH.exists():
+        raise HTTPException(status_code=400, detail="Kill switch is not active")
+    try:
+        KILL_SWITCH_PATH.unlink()
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not clear kill switch: {exc}") from exc
+
+    logger.info("Kill switch reset — agent may be restarted")
+    return {"message": "Kill switch cleared. You may now restart the agent."}
