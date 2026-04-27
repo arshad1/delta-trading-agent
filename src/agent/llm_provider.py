@@ -393,9 +393,10 @@ class OpenAICompatProvider(LLMProvider):
                 rc = getattr(delta, "reasoning_content", None)
                 if rc:
                     full_thinking += rc
-                    # Log progress every 500 chars to avoid log spam
+                    # Log a snippet every 500 chars so you can read what the model is thinking
                     if len(full_thinking) - _last_logged_thinking >= 500:
-                        logger.info("[%s] Thinking... %d chars", self._provider, len(full_thinking))
+                        snippet = full_thinking[-200:].replace("\n", " ").strip()
+                        logger.info("[%s] Thinking (%d chars): ...%s", self._provider, len(full_thinking), snippet)
                         _last_logged_thinking = len(full_thinking)
 
                 # Capture actual response content
@@ -409,9 +410,9 @@ class OpenAICompatProvider(LLMProvider):
 
             if not full_text:
                 logger.error(
-                    "[%s] Empty response after streaming! finish_reason=%s thinking_len=%d "
-                    "— model may have used all tokens for reasoning. max_tokens=%d",
+                    "[%s] Empty response! finish_reason=%s thinking_len=%d max_tokens=%d\nThinking content:\n%s",
                     self._provider, finish_reason, len(full_thinking), effective_max_tokens,
+                    full_thinking[-1000:] if full_thinking else "(none)",
                 )
             else:
                 logger.info(
